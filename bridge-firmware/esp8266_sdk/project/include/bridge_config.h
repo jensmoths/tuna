@@ -1,0 +1,68 @@
+#ifndef TUNA_BRIDGE_CONFIG_H
+#define TUNA_BRIDGE_CONFIG_H
+
+#if defined(__has_include)
+#if __has_include(<c_types.h>)
+#include <c_types.h>
+#else
+#include <stdint.h>
+#define BIT_RATE_115200 115200
+#endif
+#else
+#include <stdint.h>
+#define BIT_RATE_115200 115200
+#endif
+
+#ifndef BRIDGE_WIFI_SSID
+#define BRIDGE_WIFI_SSID "YOUR_WIFI_SSID"
+#endif
+
+#ifndef BRIDGE_WIFI_PASSWORD
+#define BRIDGE_WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+#endif
+
+#ifndef BRIDGE_HOSTNAME
+#define BRIDGE_HOSTNAME "tuna-bridge"
+#endif
+
+#ifndef BRIDGE_TCP_PORT
+#define BRIDGE_TCP_PORT 5761
+#endif
+
+#ifndef BRIDGE_FC_BAUD
+#define BRIDGE_FC_BAUD BIT_RATE_115200
+#endif
+
+#ifndef BRIDGE_WIFI_RETRY_MS
+#define BRIDGE_WIFI_RETRY_MS 5000
+#endif
+
+#ifndef BRIDGE_PUMP_INTERVAL_MS
+#define BRIDGE_PUMP_INTERVAL_MS 1
+#endif
+
+#ifndef BRIDGE_CLIENT_TO_FC_BUFFER_BYTES
+#define BRIDGE_CLIENT_TO_FC_BUFFER_BYTES 1024
+#endif
+
+#ifndef BRIDGE_FC_TO_CLIENT_BUFFER_BYTES
+#define BRIDGE_FC_TO_CLIENT_BUFFER_BYTES 8192
+#endif
+
+#ifndef BRIDGE_TCP_CHUNK_BYTES
+#define BRIDGE_TCP_CHUNK_BYTES 512
+#endif
+
+#ifndef BRIDGE_FC_TO_CLIENT_QUIET_TICKS
+#define BRIDGE_FC_TO_CLIENT_QUIET_TICKS 4
+#endif
+
+#ifndef BRIDGE_DIAGNOSTIC_BUILD
+#define BRIDGE_DIAGNOSTIC_BUILD 0
+#endif
+
+#ifndef BRIDGE_DIAGNOSTIC_SERIAL_BAUD
+#define BRIDGE_DIAGNOSTIC_SERIAL_BAUD BIT_RATE_115200
+#endif
+
+#endif  // TUNA_BRIDGE_CONFIG_H

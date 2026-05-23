@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Local transferred/reference Blackbox Logs
+transferred-logs/
+reference-logs/
+*.bbl
+*.bbl.part
+
+# ESP8266 SDK build artifacts
+bridge-firmware/esp8266_sdk/bin/
+bridge-firmware/esp8266_sdk/project/.output/
+bridge-firmware/esp8266_sdk/project/user/.output/
+
+# ESP-IDF build artifacts
+bridge-firmware/esp32_s3_usb_host/build/
+bridge-firmware/esp32_s3_usb_host/sdkconfig
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.swp
