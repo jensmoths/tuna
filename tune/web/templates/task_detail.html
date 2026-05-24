@@ -1,0 +1,14 @@
+{% extends "layout.html" %}{% block body %}
+<h1>{{ task.title }}</h1>
+<p class="muted">Task #{{ task.id }} · {{ task.kind }} · {{ task.status }}</p>
+<div class="card"><p>{{ task.body }}</p></div>
+{% if diagnosis %}<h2>Diagnosis</h2><div class="card"><p>{{ diagnosis.body }}</p><p class="muted">Confidence: {{ diagnosis.confidence }}</p></div>{% endif %}
+{% if update %}
+<h2>Tune Update #{{ update.id }}</h2>
+<div class="card"><p>Status: <strong>{{ update.status }}</strong></p><h3>Structured settings</h3><pre>{{ update.settings | tojson(indent=2) }}</pre><h3>Betaflight CLI artifact</h3><pre>{{ update.cli_text }}</pre></div>
+{% if task.status == 'open' and update.status == 'proposed' %}
+<div class="card danger"><h2>Approve for Tuning Agent write-back</h2><p>This does not write to the FC from the web UI. It records Operator approval. The Tuning Agent must perform write-back through FCS and record success or failure.</p><form method="post" action="/tasks/{{ task.id }}/approve-write"><label><input type="checkbox" name="safety_confirmed" value="yes"> I confirm the correct Build/FC is connected and the aircraft is safe for FC write-back.</label><p><button type="submit">Approve for write-back</button></p></form></div>
+<div class="card"><h2>Reject</h2><form method="post" action="/tasks/{{ task.id }}/reject"><label>Operator reason</label><textarea name="reason" required></textarea><p><button type="submit">Reject Tune Update</button></p></form></div>
+{% endif %}
+{% else %}<h2>Payload</h2><pre>{{ task.payload | tojson(indent=2) }}</pre>{% endif %}
+{% endblock %}

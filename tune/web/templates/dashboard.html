@@ -1,0 +1,10 @@
+{% extends "layout.html" %}{% block body %}
+<h1>Dashboard</h1>
+<div class="grid">
+{% for key,value in counts.items() %}<div class="card"><div class="muted">{{ key.replace('_',' ') }}</div><div style="font-size:2rem">{{ value }}</div></div>{% endfor %}
+</div>
+<h2>Needs Operator attention</h2>
+{% for task in tasks %}<div class="card"><div class="status">{{ task.title }}</div><p>{{ task.body }}</p><a href="/tasks/{{ task.id }}">Review task #{{ task.id }}</a></div>{% else %}<p>No open Operator Tasks.</p>{% endfor %}
+<h2>Pending Tune Updates</h2>
+{% for update in updates %}<div class="card">Tune Update #{{ update.id }} — <strong>{{ update.status }}</strong></div>{% else %}<p>No pending Tune Updates.</p>{% endfor %}
+{% endblock %}

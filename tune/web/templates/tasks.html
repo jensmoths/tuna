@@ -1,0 +1,6 @@
+{% extends "layout.html" %}{% block body %}
+<h1>Operator Tasks</h1>
+<table><tr><th>ID</th><th>Status</th><th>Kind</th><th>Title</th><th>Created</th></tr>
+{% for task in tasks %}<tr><td><a href="/tasks/{{ task.id }}">{{ task.id }}</a></td><td>{{ task.status }}</td><td>{{ task.kind }}</td><td>{{ task.title }}</td><td>{{ task.created_at }}</td></tr>{% endfor %}
+</table>
+{% endblock %}

@@ -4,6 +4,8 @@
 
 Tuna is a drone-tuning system that iterates toward a better tune from recorded flight data. Keep the actor that analyzes tuning separate from the actor that flies the drone and the human operating Tuna.
 
+**Tuna** is the whole product/system, including the **Tuning Agent**, state/history, Blackbox Log handling, FCS integration, and future user interfaces. The `tune` Python package/CLI is only the durable state, domain-rules, parsing, and helper-tool layer used by the **Tuning Agent**; do not treat `tune` as the whole Tuna product.
+
 ## Domain vocabulary
 
 Use these exact terms in issues, tests, code, plans, and summaries:
@@ -23,14 +25,17 @@ Use these exact terms in issues, tests, code, plans, and summaries:
 - **FC Service** / **FCS**: host-side service using the **Bridge** for higher-level flight-controller operations.
 - **Post-flight Transfer**: transfer of completed **Blackbox Logs** after disarm; not live streaming.
 - **Import**: bringing a transferred **Blackbox Log** into **Tuna**, associating it with the current **Build**, and making it analyzable.
+- **Operator Task**: durable structured request from the **Tuning Agent** to the **Operator** for human input, confirmation, or review. Avoid treating it as free-form chat.
+- `tune`: Python package and helper CLI for Tuna state, domain rules, deterministic Blackbox Log metadata extraction, and SQLite persistence. It is a tool used by the **Tuning Agent**, not the workflow brain.
 
 ## Domain rules
 
-- A **Pilot** generates **Blackbox Logs**; an **Operator** runs Tuna workflows on the **Host Computer**.
+- A **Pilot** generates **Blackbox Logs**; the **Tuning Agent** owns Tuna workflow decisions; an **Operator** performs human-only workflow actions on the **Host Computer**.
 - The **Tuning Agent** uses **FCS**, not raw Bridge/protocol access, for log operations and write-back.
+- The **Tuning Agent** may use `tune` to query/record state, but `tune` must not decide what action should happen next in a **Loop**.
 - The **Bridge** may expose raw flight-controller protocol access, but **Post-flight Transfer** must preserve logs faithfully without semantic transformation.
 - The **Host Computer** retains transferred log history; malformed/truncated/unreadable logs are retained as diagnostic artifacts until understood.
-- In v1, the **Operator** sets the current **Build** before a **Loop** begins and decides whether physical/tuning-relevant changes create a new **Build**.
+- In v1, the **Operator** confirms the current **Build** before a **Loop** begins and decides whether physical/tuning-relevant changes create a new **Build**. The **Tuning Agent** should extract what it can from the FC through **FCS** to help this decision.
 - A **Loop** has one fixed **Build** and one fixed **Tune Goal**; a **Build** may have multiple **Loops** over time.
 - A **Loop** ends when the **Tuning Agent** concludes no further improvement should be made, or the **Operator** starts a new **Loop** for a different **Build** or **Tune Goal**.
 - A **Loop** may exist before any **Tuning Iteration** starts and retains ordered history of applied/rejected updates and loop-end decisions.
@@ -39,11 +44,15 @@ Use these exact terms in issues, tests, code, plans, and summaries:
 - Each successful **Tuning Iteration** produces exactly one **Diagnosis** and either a **Tune Update** or no change.
 - A failed **Tuning Iteration** is distinct from a completed no-change result and remains in **Loop** history.
 - A **Tune Update** applies to one **Build** and is expressed as absolute target values, not only deltas.
+- A **Tune Update** stores structured absolute target settings as the source of truth and may also store generated Betaflight CLI text as an application artifact.
 - Applying a **Tune Update** completes the **Tuning Iteration** and continues the same **Loop**.
 - If later evidence is worse, start a new **Tuning Iteration** in the same **Loop**; do not reopen the previous one.
-- If **Operator** review is enabled, the iteration remains open until the update is applied or rejected.
+- In v1, **Operator** review is required for every **Tune Update**; the iteration remains open until the update is applied or rejected.
 - Rejected updates do not change the current tune; v1 rejection requires an **Operator** reason and does not include manual editing.
 - If application fails, the iteration remains incomplete with the failure recorded; retries may occur in the same open iteration.
+- The local web Operator Console records **Operator Task** responses and approval/rejection decisions; it must not perform FC write-back itself.
+- Approval of a **Tune Update** through the Operator Console means approved for **Tuning Agent** write-back through **FCS**, not already applied.
 - Current tune source of truth in v1 is Tuna's most recently applied recorded **Tune Update**, unless the **Operator** declares an out-of-band change.
 - The **Tuning Agent** owns the decision to discard the FC copy of a transferred log; in v1 the **Operator** performs deletion.
+- The **Tuning Agent** performs **Import** of transferred **Blackbox Logs** into Tuna state. Import must attempt metadata extraction from the beginning and retain parse status/warnings.
 

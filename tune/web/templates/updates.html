@@ -1,0 +1,4 @@
+{% extends "layout.html" %}{% block body %}
+<h1>Tune Updates</h1>
+{% for update in updates %}<div class="card"><h2>#{{ update.id }} — {{ update.status }}</h2><p>Build {{ update.build_id }}, Tuning Iteration {{ update.iteration_id }}</p><pre>{{ update.settings | tojson(indent=2) }}</pre>{% if update.application_failure %}<p><strong>Write failure:</strong> {{ update.application_failure }}</p>{% endif %}</div>{% endfor %}
+{% endblock %}
