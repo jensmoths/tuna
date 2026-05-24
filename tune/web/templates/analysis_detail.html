@@ -9,7 +9,14 @@
 </div>
 <h2>Activity</h2><pre>{{ item.analysis.activity | tojson(indent=2) }}</pre>
 <h2>Tracking</h2><pre>{{ item.analysis.tracking | tojson(indent=2) }}</pre>
-<h2>Segments</h2><pre>{{ item.analysis.segments | tojson(indent=2) }}</pre>
+<h2>Segments</h2>
+<h3>High-rate segments</h3>
+<table><tr><th>Axis</th><th>Start</th><th>Duration</th><th>Max setpoint</th><th>Mean error</th><th>Motor sat</th><th>Rows</th></tr>
+{% for segment in item.analysis.segments.high_rate %}<tr><td>{{ segment.axis }}</td><td>{{ "%.2f"|format(segment.start_time_seconds) }}s</td><td>{{ "%.2f"|format(segment.duration_seconds) }}s</td><td>{{ segment.max_abs_setpoint }}</td><td>{{ "%.2f"|format(segment.tracking.mean_abs_error or 0) }}</td><td>{{ segment.motor_saturation_samples }}</td><td>{{ segment.raw_data_ref.start_row }}-{{ segment.raw_data_ref.end_row }}</td></tr>{% else %}<tr><td colspan="7">No high-rate segments found.</td></tr>{% endfor %}</table>
+<h3>Throttle-punch segments</h3>
+<table><tr><th>Start</th><th>Duration</th><th>Peak throttle</th><th>Motor sat</th><th>Rows</th></tr>
+{% for segment in item.analysis.segments.throttle_punch %}<tr><td>{{ "%.2f"|format(segment.start_time_seconds) }}s</td><td>{{ "%.2f"|format(segment.duration_seconds) }}s</td><td>{{ segment.throttle_peak }}</td><td>{{ segment.motor_saturation_samples }}</td><td>{{ segment.raw_data_ref.start_row }}-{{ segment.raw_data_ref.end_row }}</td></tr>{% else %}<tr><td colspan="5">No throttle-punch segments found.</td></tr>{% endfor %}</table>
+<pre>{{ item.analysis.segments | tojson(indent=2) }}</pre>
 <h2>Rough noise</h2><pre>{{ item.analysis.rough_noise | tojson(indent=2) }}</pre>
 <h2>Ranges</h2><pre>{{ item.analysis.ranges | tojson(indent=2) }}</pre>
 {% endblock %}

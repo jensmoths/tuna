@@ -105,3 +105,9 @@ PIDtoolbox is known for spectral analysis and frequency-vs-throttle views. Tuna 
 - Basic throttle-punch segment detection using throttle command thresholding.
 - Segment summaries include timing, sample count, max setpoint/gyro where applicable, throttle peak where applicable, and motor saturation sample count.
 - Operator Console analysis detail page shows segment JSON.
+
+## Implemented third pass
+
+- High-rate segments include per-segment tracking error and rough gyro/D-term noise metrics.
+- Segments include `raw_data_ref` with CSV path, row range, and time range so the **Tuning Agent** can inspect the underlying decoded rows directly.
+- Operator Console analysis detail page now shows a concise segment table before raw segment JSON.

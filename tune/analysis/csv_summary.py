@@ -75,6 +75,7 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
                 last_time = time_value
 
             numeric: dict[str, float] = {}
+            deltas: dict[str, float] = {}
             for name, value_text in row.items():
                 if not name.startswith(("gyroADC[", "gyroUnfilt[", "setpoint[", "motor[", "axisP[", "axisI[", "axisD[", "axisF[", "rcCommand[")):
                     continue
@@ -88,6 +89,7 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
                     if previous is not None:
                         acc = rough_noise_acc.setdefault(name, {"samples": 0, "sum_abs_delta": 0.0, "max_abs_delta": 0.0})
                         delta = abs(value - previous)
+                        deltas[name] = delta
                         acc["samples"] += 1
                         acc["sum_abs_delta"] += delta
                         acc["max_abs_delta"] = max(float(acc["max_abs_delta"]), delta)
@@ -133,16 +135,43 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
                                 "end_time_us": time_value,
                                 "last_time_us": time_value,
                                 "samples": 0,
+                                "start_row": row_count,
+                                "end_row": row_count,
                                 "max_abs_setpoint": 0.0,
                                 "max_abs_gyro": 0.0,
                                 "motor_saturation_samples": 0,
+                                "tracking_sum_abs_error": 0.0,
+                                "tracking_max_abs_error": 0.0,
+                                "tracking_samples_over_threshold": 0,
+                                "gyro_sum_abs_delta": 0.0,
+                                "gyro_max_abs_delta": 0.0,
+                                "gyro_delta_samples": 0,
+                                "dterm_sum_abs_delta": 0.0,
+                                "dterm_max_abs_delta": 0.0,
+                                "dterm_delta_samples": 0,
                             }
                         builder["end_time_us"] = time_value
                         builder["last_time_us"] = time_value
+                        builder["end_row"] = row_count
                         builder["samples"] += 1
                         builder["max_abs_setpoint"] = max(builder["max_abs_setpoint"], abs(setpoint))
                         if gyro is not None:
                             builder["max_abs_gyro"] = max(builder["max_abs_gyro"], abs(gyro))
+                            error = abs(setpoint - gyro)
+                            builder["tracking_sum_abs_error"] += error
+                            builder["tracking_max_abs_error"] = max(builder["tracking_max_abs_error"], error)
+                            if error >= TRACKING_THRESHOLD:
+                                builder["tracking_samples_over_threshold"] += 1
+                        delta = deltas.get(f"gyroADC[{index}]")
+                        if delta is not None:
+                            builder["gyro_sum_abs_delta"] += delta
+                            builder["gyro_max_abs_delta"] = max(builder["gyro_max_abs_delta"], delta)
+                            builder["gyro_delta_samples"] += 1
+                        delta = deltas.get(f"axisD[{index}]")
+                        if delta is not None:
+                            builder["dterm_sum_abs_delta"] += delta
+                            builder["dterm_max_abs_delta"] = max(builder["dterm_max_abs_delta"], delta)
+                            builder["dterm_delta_samples"] += 1
                         if saturated_this_row:
                             builder["motor_saturation_samples"] += 1
                         high_rate_builders[axis] = builder
@@ -158,12 +187,15 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
                             "end_time_us": time_value,
                             "last_time_us": time_value,
                             "samples": 0,
+                            "start_row": row_count,
+                            "end_row": row_count,
                             "throttle_start": throttle,
                             "throttle_peak": throttle,
                             "motor_saturation_samples": 0,
                         }
                     throttle_builder["end_time_us"] = time_value
                     throttle_builder["last_time_us"] = time_value
+                    throttle_builder["end_row"] = row_count
                     throttle_builder["samples"] += 1
                     throttle_builder["throttle_peak"] = max(throttle_builder["throttle_peak"], throttle)
                     if saturated_this_row:
@@ -185,6 +217,33 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
             item["start_time_seconds"] = item.pop("start_time_us") / 1_000_000.0
             item["end_time_seconds"] = item.pop("end_time_us") / 1_000_000.0
             item["duration_seconds"] = duration_us / 1_000_000.0
+            item["raw_data_ref"] = {
+                "csv_path": str(csv_path),
+                "start_row": item.get("start_row"),
+                "end_row": item.get("end_row"),
+                "start_time_seconds": item["start_time_seconds"],
+                "end_time_seconds": item["end_time_seconds"],
+            }
+            if "tracking_sum_abs_error" in item:
+                samples = item.pop("samples")
+                item["samples"] = samples
+                item["tracking"] = {
+                    "mean_abs_error": item.pop("tracking_sum_abs_error") / samples if samples else None,
+                    "max_abs_error": item.pop("tracking_max_abs_error"),
+                    "samples_over_threshold": item.pop("tracking_samples_over_threshold"),
+                }
+                gyro_delta_samples = item.pop("gyro_delta_samples")
+                item["rough_noise"] = {
+                    "gyro_mean_abs_delta": item.pop("gyro_sum_abs_delta") / gyro_delta_samples if gyro_delta_samples else None,
+                    "gyro_max_abs_delta": item.pop("gyro_max_abs_delta"),
+                    "gyro_delta_samples": gyro_delta_samples,
+                }
+                dterm_delta_samples = item.pop("dterm_delta_samples")
+                item["rough_noise"].update({
+                    "dterm_mean_abs_delta": item.pop("dterm_sum_abs_delta") / dterm_delta_samples if dterm_delta_samples else None,
+                    "dterm_max_abs_delta": item.pop("dterm_max_abs_delta"),
+                    "dterm_delta_samples": dterm_delta_samples,
+                })
             finished.append(item)
         return finished
 

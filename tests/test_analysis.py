@@ -44,6 +44,24 @@ class AnalysisTests(unittest.TestCase):
         self.assertIn("gyroADC[0]", summary["rough_noise"])
         self.assertIn("high_rate", summary["segments"])
         self.assertIn("throttle_punch", summary["segments"])
+    def test_segments_include_per_segment_metrics_and_raw_data_refs(self):
+        path = self.root / "segments.csv"
+        with path.open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=["time", "gyroADC[0]", "gyroADC[1]", "gyroADC[2]", "setpoint[0]", "setpoint[1]", "setpoint[2]", "motor[0]", "rcCommand[3]", "axisD[0]"])
+            writer.writeheader()
+            writer.writerow({"time": 0, "gyroADC[0]": 0, "gyroADC[1]": 0, "gyroADC[2]": 0, "setpoint[0]": 0, "setpoint[1]": 0, "setpoint[2]": 0, "motor[0]": 1000, "rcCommand[3]": 1000, "axisD[0]": 0})
+            writer.writerow({"time": 100000, "gyroADC[0]": 150, "gyroADC[1]": 0, "gyroADC[2]": 0, "setpoint[0]": 250, "setpoint[1]": 0, "setpoint[2]": 0, "motor[0]": 1500, "rcCommand[3]": 1750, "axisD[0]": 10})
+            writer.writerow({"time": 250000, "gyroADC[0]": 260, "gyroADC[1]": 0, "gyroADC[2]": 0, "setpoint[0]": 300, "setpoint[1]": 0, "setpoint[2]": 0, "motor[0]": 2000, "rcCommand[3]": 1800, "axisD[0]": 30})
+        summary = analyze_csv_log(path)
+        high_rate = summary["segments"]["high_rate"]
+        self.assertEqual(len(high_rate), 1)
+        self.assertEqual(high_rate[0]["axis"], "roll")
+        self.assertEqual(high_rate[0]["raw_data_ref"]["csv_path"], str(path))
+        self.assertEqual(high_rate[0]["raw_data_ref"]["start_row"], 2)
+        self.assertGreater(high_rate[0]["tracking"]["mean_abs_error"], 0)
+        self.assertGreater(high_rate[0]["rough_noise"]["gyro_mean_abs_delta"], 0)
+        self.assertEqual(len(summary["segments"]["throttle_punch"]), 1)
+
 
     def test_decode_blackbox_log_reports_missing_decoder(self):
         with self.assertRaises(BlackboxDecodeError):
