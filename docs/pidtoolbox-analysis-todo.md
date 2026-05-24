@@ -98,3 +98,10 @@ PIDtoolbox is known for spectral analysis and frequency-vs-throttle views. Tuna 
 - Provide suggested areas to consider, not automatic changes: P, I, D, feedforward, filters, dynamic idle, rates.
 - Compare current analysis to previous **Tuning Iterations** in the same **Loop**.
 - Track whether a **Tune Update** improved or worsened response/noise.
+
+## Implemented second pass
+
+- Basic high-rate segment detection for roll, pitch, and yaw setpoint activity.
+- Basic throttle-punch segment detection using throttle command thresholding.
+- Segment summaries include timing, sample count, max setpoint/gyro where applicable, throttle peak where applicable, and motor saturation sample count.
+- Operator Console analysis detail page shows segment JSON.

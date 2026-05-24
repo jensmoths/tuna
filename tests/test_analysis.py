@@ -42,6 +42,8 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(summary["activity"]["high_rate_samples"]["roll"], 1)
         self.assertGreater(summary["tracking"]["roll"]["mean_abs_error"], 0)
         self.assertIn("gyroADC[0]", summary["rough_noise"])
+        self.assertIn("high_rate", summary["segments"])
+        self.assertIn("throttle_punch", summary["segments"])
 
     def test_decode_blackbox_log_reports_missing_decoder(self):
         with self.assertRaises(BlackboxDecodeError):

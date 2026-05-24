@@ -9,6 +9,7 @@
 </div>
 <h2>Activity</h2><pre>{{ item.analysis.activity | tojson(indent=2) }}</pre>
 <h2>Tracking</h2><pre>{{ item.analysis.tracking | tojson(indent=2) }}</pre>
+<h2>Segments</h2><pre>{{ item.analysis.segments | tojson(indent=2) }}</pre>
 <h2>Rough noise</h2><pre>{{ item.analysis.rough_noise | tojson(indent=2) }}</pre>
 <h2>Ranges</h2><pre>{{ item.analysis.ranges | tojson(indent=2) }}</pre>
 {% endblock %}

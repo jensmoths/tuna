@@ -70,6 +70,7 @@ class OperatorWebTests(unittest.TestCase):
         self.assertEqual(detail.status_code, 200)
         self.assertIn(b"Quality", detail.data)
         self.assertIn(b"Tracking", detail.data)
+        self.assertIn(b"Segments", detail.data)
 
 
 if __name__ == "__main__":

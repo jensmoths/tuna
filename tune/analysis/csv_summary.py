@@ -9,6 +9,10 @@ TRACKING_THRESHOLD = 50.0
 HIGH_RATE_THRESHOLD = 200.0
 MOTOR_SATURATION_THRESHOLD = 1990.0
 MIN_USEFUL_DURATION_SECONDS = 5.0
+SEGMENT_GAP_US = 200_000.0
+MIN_SEGMENT_DURATION_US = 100_000.0
+THROTTLE_PUNCH_THRESHOLD = 1700.0
+
 
 
 def _to_float(value: str) -> float | None:
@@ -48,6 +52,10 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
     tracking_acc = {axis: {"samples": 0, "sum_abs_error": 0.0, "max_abs_error": 0.0, "samples_over_threshold": 0} for axis in AXES.values()}
     previous_values: dict[str, float] = {}
     rough_noise_acc: dict[str, dict[str, float | int]] = {}
+    high_rate_builders = {axis: None for axis in AXES.values()}
+    high_rate_segments = []
+    throttle_builder = None
+    throttle_segments = []
 
     with csv_path.open(newline="", errors="replace") as handle:
         reader = csv.DictReader(handle)
@@ -108,6 +116,80 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
                     saturated_this_row = True
             if saturated_this_row:
                 motor_saturation_samples += 1
+
+            if time_value is not None:
+                for index, axis in AXES.items():
+                    setpoint = numeric.get(f"setpoint[{index}]")
+                    gyro = numeric.get(f"gyroADC[{index}]")
+                    active = setpoint is not None and abs(setpoint) >= HIGH_RATE_THRESHOLD
+                    builder = high_rate_builders[axis]
+                    if active:
+                        if builder is None or time_value - builder["last_time_us"] > SEGMENT_GAP_US:
+                            if builder is not None:
+                                high_rate_segments.append(builder)
+                            builder = {
+                                "axis": axis,
+                                "start_time_us": time_value,
+                                "end_time_us": time_value,
+                                "last_time_us": time_value,
+                                "samples": 0,
+                                "max_abs_setpoint": 0.0,
+                                "max_abs_gyro": 0.0,
+                                "motor_saturation_samples": 0,
+                            }
+                        builder["end_time_us"] = time_value
+                        builder["last_time_us"] = time_value
+                        builder["samples"] += 1
+                        builder["max_abs_setpoint"] = max(builder["max_abs_setpoint"], abs(setpoint))
+                        if gyro is not None:
+                            builder["max_abs_gyro"] = max(builder["max_abs_gyro"], abs(gyro))
+                        if saturated_this_row:
+                            builder["motor_saturation_samples"] += 1
+                        high_rate_builders[axis] = builder
+
+                throttle = numeric.get("rcCommand[3]")
+                throttle_active = throttle is not None and throttle >= THROTTLE_PUNCH_THRESHOLD
+                if throttle_active:
+                    if throttle_builder is None or time_value - throttle_builder["last_time_us"] > SEGMENT_GAP_US:
+                        if throttle_builder is not None:
+                            throttle_segments.append(throttle_builder)
+                        throttle_builder = {
+                            "start_time_us": time_value,
+                            "end_time_us": time_value,
+                            "last_time_us": time_value,
+                            "samples": 0,
+                            "throttle_start": throttle,
+                            "throttle_peak": throttle,
+                            "motor_saturation_samples": 0,
+                        }
+                    throttle_builder["end_time_us"] = time_value
+                    throttle_builder["last_time_us"] = time_value
+                    throttle_builder["samples"] += 1
+                    throttle_builder["throttle_peak"] = max(throttle_builder["throttle_peak"], throttle)
+                    if saturated_this_row:
+                        throttle_builder["motor_saturation_samples"] += 1
+
+    for builder in high_rate_builders.values():
+        if builder is not None:
+            high_rate_segments.append(builder)
+    if throttle_builder is not None:
+        throttle_segments.append(throttle_builder)
+
+    def finish_segments(segments):
+        finished = []
+        for segment in segments:
+            duration_us = segment["end_time_us"] - segment["start_time_us"]
+            if duration_us < MIN_SEGMENT_DURATION_US:
+                continue
+            item = {k: v for k, v in segment.items() if k != "last_time_us"}
+            item["start_time_seconds"] = item.pop("start_time_us") / 1_000_000.0
+            item["end_time_seconds"] = item.pop("end_time_us") / 1_000_000.0
+            item["duration_seconds"] = duration_us / 1_000_000.0
+            finished.append(item)
+        return finished
+
+    high_rate_segments = finish_segments(high_rate_segments)
+    throttle_segments = finish_segments(throttle_segments)
 
     required = ["time", "gyroADC[0]", "gyroADC[1]", "gyroADC[2]", "setpoint[0]", "setpoint[1]", "setpoint[2]"]
     missing = [name for name in required if name not in fields]
@@ -173,5 +255,9 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
         },
         "tracking": tracking,
         "rough_noise": rough_noise,
+        "segments": {
+            "high_rate": high_rate_segments,
+            "throttle_punch": throttle_segments,
+        },
         "warnings": warnings,
     }
