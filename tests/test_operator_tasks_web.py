@@ -16,6 +16,7 @@ from tune.services.loops import create_loop
 from tune.services.operator_tasks import create_task
 from tune.services.tune_updates import propose_tune_update
 from tune.storage import connect, init_db
+from tune.services.analysis import analyze_imported_log
 from tune.web.app import create_app
 
 
@@ -53,6 +54,22 @@ class OperatorWebTests(unittest.TestCase):
         task = self.conn.execute("SELECT status FROM operator_tasks WHERE id = ?", (task_id,)).fetchone()
         self.assertEqual(update["status"], "approved_pending_write")
         self.assertEqual(task["status"], "resolved")
+
+    def test_analysis_pages_show_latest_analysis(self):
+        build_id = create_build(self.conn, "5 inch")
+        from tune.services.logs import import_blackbox_log
+        imported_log_id = import_blackbox_log(self.conn, "reference-logs/btfl_001.bbl", build_id=build_id, storage_dir=self.root / "logs")
+        csv_path = self.root / "summary.csv"
+        csv_path.write_text("time,gyroADC[0],gyroADC[1],gyroADC[2],setpoint[0],setpoint[1],setpoint[2],motor[0],axisP[0],axisI[0],axisD[0]\n0,0,0,0,0,0,0,1000,0,0,0\n6000000,10,0,0,20,0,0,1200,1,1,1\n")
+        analyze_imported_log(self.conn, imported_log_id, csv_path=csv_path)
+        client = create_app(self.db_path).test_client()
+        page = client.get("/analysis")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Blackbox Log #", page.data)
+        detail = client.get(f"/logs/{imported_log_id}/analysis")
+        self.assertEqual(detail.status_code, 200)
+        self.assertIn(b"Quality", detail.data)
+        self.assertIn(b"Tracking", detail.data)
 
 
 if __name__ == "__main__":

@@ -94,6 +94,39 @@ def create_app(db_path: str | Path) -> Flask:
         rows = conn.execute("SELECT id, build_id, managed_path, sha256, size_bytes, parse_status, warnings_json, imported_at FROM blackbox_logs ORDER BY imported_at DESC, id DESC").fetchall()
         return render_template("logs.html", logs=rows)
 
+    @app.get("/analysis")
+    def analysis():
+        conn = db()
+        rows = conn.execute("""
+            SELECT a.*, l.build_id, l.managed_path
+            FROM log_analyses a
+            JOIN blackbox_logs l ON l.id = a.log_id
+            ORDER BY a.analyzed_at DESC, a.id DESC
+        """).fetchall()
+        analyses = []
+        for row in rows:
+            item = _dict(row)
+            item["analysis"] = json.loads(item["analysis_json"])
+            analyses.append(item)
+        return render_template("analysis.html", analyses=analyses)
+
+    @app.get("/logs/<int:log_id>/analysis")
+    def log_analysis(log_id: int):
+        conn = db()
+        row = conn.execute("""
+            SELECT a.*, l.build_id, l.managed_path
+            FROM log_analyses a
+            JOIN blackbox_logs l ON l.id = a.log_id
+            WHERE a.log_id = ?
+            ORDER BY a.analyzed_at DESC, a.id DESC
+            LIMIT 1
+        """, (log_id,)).fetchone()
+        if not row:
+            return "Analysis not found", 404
+        item = _dict(row)
+        item["analysis"] = json.loads(item["analysis_json"])
+        return render_template("analysis_detail.html", item=item)
+
     @app.get("/updates")
     def updates():
         conn = db()

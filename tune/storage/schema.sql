@@ -83,3 +83,19 @@ CREATE TABLE IF NOT EXISTS operator_tasks (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   resolved_at TEXT
 );
+
+
+CREATE TABLE IF NOT EXISTS decoded_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  log_id INTEGER NOT NULL REFERENCES blackbox_logs(id),
+  csv_path TEXT NOT NULL,
+  decoder_command TEXT NOT NULL DEFAULT 'blackbox_decode',
+  decoded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS log_analyses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  log_id INTEGER NOT NULL REFERENCES blackbox_logs(id),
+  analysis_json TEXT NOT NULL,
+  analyzed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

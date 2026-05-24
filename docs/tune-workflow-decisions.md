@@ -76,6 +76,27 @@ Decisions recorded before implementing the Tuna workflow model.
 - Import should attempt metadata extraction from the beginning.
 - Import records source path, managed/canonical path, file size, hash, import time, **Build** association, parse status, metadata JSON, and warnings where available.
 
+
+
+## Blackbox Log analysis
+
+- Do not implement a full Blackbox binary decoder in Tuna initially.
+- Use Betaflight `blackbox_decode` as the first decoder backend for `.bbl` to CSV conversion.
+- Treat Blackbox Explorer and PIDtoolbox as human reference/validation tools, not the first automated backend.
+- `tune log decode --log-id ... --json` decodes an imported **Blackbox Log** to a CSV artifact and records it in SQLite.
+- `tune log analyze --log-id ... --json` analyzes the latest decoded CSV, or a provided CSV path, and records JSON analysis in SQLite.
+- Initial analysis is intentionally simple and machine-readable: row count, duration, fields present, field count, ranges for gyro/setpoint/motor/PID-term fields, and warnings for missing expected fields.
+- Future analysis can add maneuver detection, noise summaries, response/overshoot metrics, motor saturation checks, and PIDtoolbox-like spectral analysis.
+
+## Tuning Agent write-back handoff
+
+- The **Tuning Agent** finds Operator-approved writes with `tune update pending-writes --json`.
+- Pending write results include the **Tune Update** id, **Build** id, **Tuning Iteration** id, structured settings, Betaflight CLI artifact, and **Diagnosis** text where available.
+- The **Tuning Agent** performs write-back through **FCS**, not through the Operator Console.
+- FCS owns the low-level Betaflight CLI write-back helper.
+- After write-back, the **Tuning Agent** records either `tune update apply --update-id ... --json` or `tune update record-write-failure --update-id ... --failure ... --json`.
+- The initial FCS write-back boundary sends generated Betaflight CLI text over the raw Bridge transport after entering CLI mode. The caller owns safety checks and FC identity verification before invoking it.
+
 ## Proposed package structure
 
 ```text

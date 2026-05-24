@@ -101,6 +101,15 @@ tune --db tune.sqlite3 log import transferred-logs/example.bbl --build-id 1 --js
 
 Use parsed metadata and warnings to decide whether a **Blackbox Log** is useful, deferred, or diagnostic-only. Do not discard files just because parsing fails.
 
+When deeper analysis is needed, decode and analyze imported logs:
+
+```bash
+tune --db tune.sqlite3 log decode --log-id 1 --json
+tune --db tune.sqlite3 log analyze --log-id 1 --json
+```
+
+If `blackbox_decode` is not installed, report that dependency clearly and fall back to available import metadata only.
+
 ### 5. Start a Tuning Iteration
 
 Choose imported **Blackbox Logs** for the **Tuning Iteration**. You may defer logs or reuse prior logs as reference input.
@@ -151,10 +160,22 @@ If recommending no change, record a **Diagnosis** explaining why and do not inve
 
 Do not apply a **Tune Update** without **Operator** approval.
 
-After approval:
+After approval, the Operator Console records `approved_pending_write`. Find approved writes with:
+
+```bash
+tune --db tune.sqlite3 update pending-writes --json
+```
+
+For each pending write, verify state and FC identity, perform FCS write-back, then record success:
 
 ```bash
 tune --db tune.sqlite3 update apply --update-id 1 --json
+```
+
+or failure:
+
+```bash
+tune --db tune.sqlite3 update record-write-failure --update-id 1 --failure "Bridge connection failed" --json
 ```
 
 After rejection:

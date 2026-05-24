@@ -1,0 +1,11 @@
+{% extends "layout.html" %}{% block body %}
+<h1>Blackbox Analysis</h1>
+{% for item in analyses %}
+<div class="card">
+  <h2>Blackbox Log #{{ item.log_id }}</h2>
+  <p>Build {{ item.build_id }} · analyzed {{ item.analyzed_at }}</p>
+  <p><strong>Usable:</strong> {{ item.analysis.quality.usable }} · <strong>Duration:</strong> {{ "%.2f"|format(item.analysis.duration_seconds or 0) }}s · <strong>Rows:</strong> {{ item.analysis.row_count }}</p>
+  <p><a href="/logs/{{ item.log_id }}/analysis">View analysis details</a></p>
+</div>
+{% else %}<p>No analyses recorded yet.</p>{% endfor %}
+{% endblock %}

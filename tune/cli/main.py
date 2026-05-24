@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from tune.services.analysis import analyze_imported_log, decode_imported_log
 from tune.services.builds import create_build
 from tune.services.diagnoses import record_diagnosis
 from tune.services.iterations import create_iteration
@@ -69,6 +70,15 @@ def main(argv: list[str] | None = None) -> int:
     log_import.add_argument("--build-id", type=int, required=True)
     log_import.add_argument("--storage-dir", default="tune-data/blackbox-logs")
     _add_json(log_import)
+    log_decode = log_sub.add_parser("decode")
+    log_decode.add_argument("--log-id", type=int, required=True)
+    log_decode.add_argument("--output-dir", default="tune-data/decoded-logs")
+    log_decode.add_argument("--decoder-command", default="blackbox_decode")
+    _add_json(log_decode)
+    log_analyze = log_sub.add_parser("analyze")
+    log_analyze.add_argument("--log-id", type=int, required=True)
+    log_analyze.add_argument("--csv-path")
+    _add_json(log_analyze)
     log_list = log_sub.add_parser("list")
     log_list.add_argument("--build-id", type=int)
     _add_json(log_list)
@@ -94,6 +104,8 @@ def main(argv: list[str] | None = None) -> int:
 
     update = top.add_parser("update")
     update_sub = update.add_subparsers(dest="action", required=True)
+    update_pending = update_sub.add_parser("pending-writes")
+    _add_json(update_pending)
     update_propose = update_sub.add_parser("propose")
     update_propose.add_argument("--iteration-id", type=int, required=True)
     update_propose.add_argument("--build-id", type=int, required=True)
@@ -164,6 +176,15 @@ def main(argv: list[str] | None = None) -> int:
         payload["metadata"] = json.loads(payload.pop("metadata_json"))
         payload["warnings"] = json.loads(payload.pop("warnings_json"))
         _emit(payload, args.json)
+    elif args.area == "log" and args.action == "decode":
+        payload = decode_imported_log(conn, args.log_id, output_dir=args.output_dir, decoder_command=args.decoder_command)
+        _emit(payload, args.json)
+    elif args.area == "log" and args.action == "analyze":
+        payload = analyze_imported_log(conn, args.log_id, csv_path=args.csv_path)
+        if args.json:
+            _print_json(payload)
+        else:
+            print(payload["duration_seconds"])
     elif args.area == "log" and args.action == "list":
         sql = "SELECT id, build_id, managed_path, sha256, size_bytes, parse_status, imported_at FROM blackbox_logs"
         params = ()
@@ -180,6 +201,30 @@ def main(argv: list[str] | None = None) -> int:
     elif args.area == "diagnosis" and args.action == "record":
         diagnosis_id = record_diagnosis(conn, args.iteration_id, args.body, confidence=args.confidence, evidence=json.loads(args.evidence_json))
         _emit({"diagnosis_id": diagnosis_id}, args.json)
+    elif args.area == "update" and args.action == "pending-writes":
+        rows = conn.execute(
+            """
+            SELECT
+              u.id AS update_id,
+              u.iteration_id,
+              u.build_id,
+              u.settings_json,
+              u.cli_text,
+              u.application_failure,
+              d.body AS diagnosis,
+              d.confidence AS diagnosis_confidence
+            FROM tune_updates u
+            LEFT JOIN diagnoses d ON d.iteration_id = u.iteration_id
+            WHERE u.status IN ('approved_pending_write', 'write_failed')
+            ORDER BY u.decided_at, u.id
+            """
+        ).fetchall()
+        payload = []
+        for row in rows:
+            item = _row_to_dict(row)
+            item["settings"] = json.loads(item.pop("settings_json"))
+            payload.append(item)
+        _print_json(payload)
     elif args.area == "update" and args.action == "propose":
         update_id = propose_tune_update(conn, args.iteration_id, args.build_id, json.loads(args.settings_json), cli_text=args.cli_text)
         _emit({"update_id": update_id}, args.json)

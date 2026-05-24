@@ -13,6 +13,7 @@ from .fc_discovery import (
     get_blackbox_log_storage_status,
 )
 from .msp_client import MspClient
+from .writeback import CliWriteResult, write_betaflight_cli_text, write_betaflight_cli_text_to_bridge
 from .msp import (
     MspFrame,
     MspProtocolError,
@@ -52,6 +53,9 @@ __all__ = [
     "discover_fc_identity",
     "get_blackbox_log_storage_status",
     "MspClient",
+    "CliWriteResult",
+    "write_betaflight_cli_text",
+    "write_betaflight_cli_text_to_bridge",
     "MspFrame",
     "MspProtocolError",
     "MSP_API_VERSION",

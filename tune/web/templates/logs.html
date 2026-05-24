@@ -1,4 +1,4 @@
 {% extends "layout.html" %}{% block body %}
 <h1>Blackbox Logs</h1><table><tr><th>ID</th><th>Build</th><th>Status</th><th>Size</th><th>Path</th><th>Imported</th></tr>
-{% for log in logs %}<tr><td>{{ log.id }}</td><td>{{ log.build_id }}</td><td>{{ log.parse_status }}</td><td>{{ log.size_bytes }}</td><td>{{ log.managed_path }}</td><td>{{ log.imported_at }}</td></tr>{% endfor %}
+{% for log in logs %}<tr><td>{{ log.id }}</td><td>{{ log.build_id }}</td><td>{{ log.parse_status }}</td><td>{{ log.size_bytes }}</td><td>{{ log.managed_path }}<br><a href="/logs/{{ log.id }}/analysis">latest analysis</a></td><td>{{ log.imported_at }}</td></tr>{% endfor %}
 </table>{% endblock %}

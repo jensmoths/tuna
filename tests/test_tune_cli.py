@@ -55,6 +55,10 @@ class TuneCliTests(unittest.TestCase):
             "--settings-json",
             '{"d_pitch":48}',
         )
+        self.run_cli_json("update", "approve-for-write", "--update-id", str(update["update_id"]))
+        pending = self.run_cli_json("update", "pending-writes")
+        self.assertEqual(pending[0]["update_id"], update["update_id"])
+        self.assertEqual(pending[0]["settings"], {"d_pitch": 48})
         applied = self.run_cli_json("update", "apply", "--update-id", str(update["update_id"]))
         self.assertEqual(applied["status"], "applied")
         status = self.run_cli_json("status")
