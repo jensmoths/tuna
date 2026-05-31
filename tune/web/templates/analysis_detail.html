@@ -8,6 +8,9 @@
   <div class="card"><div class="muted">Motor saturation samples</div><div style="font-size:2rem">{{ item.analysis.activity.motor_saturation_samples }}</div></div>
 </div>
 <h2>Activity</h2><pre>{{ item.analysis.activity | tojson(indent=2) }}</pre>
+<h2>Flight window</h2><pre>{{ item.analysis.flight | tojson(indent=2) }}</pre>
+<h2>Analysis capabilities</h2><pre>{{ item.analysis.analysis_capabilities | tojson(indent=2) }}</pre>
+<h2>Timing</h2><pre>{{ item.analysis.timing | tojson(indent=2) }}</pre>
 <h2>Tracking</h2><pre>{{ item.analysis.tracking | tojson(indent=2) }}</pre>
 <h2>Segments</h2>
 <h3>High-rate segments</h3>
@@ -18,5 +21,13 @@
 {% for segment in item.analysis.segments.throttle_punch %}<tr><td>{{ "%.2f"|format(segment.start_time_seconds) }}s</td><td>{{ "%.2f"|format(segment.duration_seconds) }}s</td><td>{{ segment.throttle_peak }}</td><td>{{ segment.motor_saturation_samples }}</td><td>{{ segment.raw_data_ref.start_row }}-{{ segment.raw_data_ref.end_row }}</td></tr>{% else %}<tr><td colspan="5">No throttle-punch segments found.</td></tr>{% endfor %}</table>
 <pre>{{ item.analysis.segments | tojson(indent=2) }}</pre>
 <h2>Rough noise</h2><pre>{{ item.analysis.rough_noise | tojson(indent=2) }}</pre>
+<h2>Spectrum</h2><pre>{{ item.analysis.spectrum | tojson(indent=2) }}</pre>
+<h2>Frequency vs throttle</h2><pre>{{ item.analysis.frequency_throttle_heatmap | tojson(indent=2) }}</pre>
+<h2>Filter analysis</h2><pre>{{ item.analysis.filter_analysis | tojson(indent=2) }}</pre>
+<h2>Noise peaks</h2><pre>{{ item.analysis.noise_peaks | tojson(indent=2) }}</pre>
+<h2>RPM analysis</h2><pre>{{ item.analysis.rpm_analysis | tojson(indent=2) }}</pre>
+<h2>Step response</h2><pre>{{ item.analysis.step_response | tojson(indent=2) }}</pre>
+<h2>Motor analysis</h2><pre>{{ item.analysis.motor_analysis | tojson(indent=2) }}</pre>
+<h2>PID term analysis</h2><pre>{{ item.analysis.pid_term_analysis | tojson(indent=2) }}</pre>
 <h2>Ranges</h2><pre>{{ item.analysis.ranges | tojson(indent=2) }}</pre>
 {% endblock %}

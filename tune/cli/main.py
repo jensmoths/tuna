@@ -8,8 +8,10 @@ from typing import Any
 from tune.services.analysis import analyze_imported_log, decode_imported_log
 from tune.services.builds import create_build
 from tune.services.diagnoses import record_diagnosis
+from tune.services.fcs_transfer import transfer_blackbox_log_from_bridge
 from tune.services.iterations import create_iteration
 from tune.services.logs import import_blackbox_log
+from tune.services.segment_rows import get_segment_rows
 from tune.services.loops import create_loop
 from tune.services.operator_tasks import create_task
 from tune.services.tune_updates import approve_for_write, mark_applied, propose_tune_update, reject, record_application_failure
@@ -70,6 +72,14 @@ def main(argv: list[str] | None = None) -> int:
     log_import.add_argument("--build-id", type=int, required=True)
     log_import.add_argument("--storage-dir", default="tune-data/blackbox-logs")
     _add_json(log_import)
+    log_transfer = log_sub.add_parser("transfer")
+    log_transfer.add_argument("--bridge-host", default="tuna-bridge-usb")
+    log_transfer.add_argument("--output", required=True)
+    log_transfer.add_argument("--size", type=int, required=True)
+    log_transfer.add_argument("--timeout", type=float, default=60.0)
+    log_transfer.add_argument("--no-trigger-msc", action="store_true", help="require the Bridge to already be in MSC raw mode")
+    log_transfer.add_argument("--no-resume", action="store_true", help="do not use .part/.state.json resume sidecars")
+    _add_json(log_transfer)
     log_decode = log_sub.add_parser("decode")
     log_decode.add_argument("--log-id", type=int, required=True)
     log_decode.add_argument("--output-dir", default="tune-data/decoded-logs")
@@ -79,6 +89,14 @@ def main(argv: list[str] | None = None) -> int:
     log_analyze.add_argument("--log-id", type=int, required=True)
     log_analyze.add_argument("--csv-path")
     _add_json(log_analyze)
+    segment_rows = log_sub.add_parser("segment-rows")
+    segment_rows.add_argument("--log-id", type=int, required=True)
+    segment_rows.add_argument("--segment-kind", required=True, choices=["high_rate", "throttle_punch"])
+    segment_rows.add_argument("--segment-index", type=int, required=True)
+    segment_rows.add_argument("--fields", help="comma-separated decoded CSV fields to return")
+    segment_rows.add_argument("--pad-rows", type=int, default=0)
+    segment_rows.add_argument("--max-rows", type=int, default=500)
+    _add_json(segment_rows)
     log_list = log_sub.add_parser("list")
     log_list.add_argument("--build-id", type=int)
     _add_json(log_list)
@@ -176,6 +194,19 @@ def main(argv: list[str] | None = None) -> int:
         payload["metadata"] = json.loads(payload.pop("metadata_json"))
         payload["warnings"] = json.loads(payload.pop("warnings_json"))
         _emit(payload, args.json)
+    elif args.area == "log" and args.action == "transfer":
+        payload = transfer_blackbox_log_from_bridge(
+            args.bridge_host,
+            output_path=Path(args.output),
+            size=args.size,
+            trigger_msc=not args.no_trigger_msc,
+            timeout_seconds=args.timeout,
+            resume=not args.no_resume,
+        )
+        if args.json:
+            _print_json(payload)
+        else:
+            print(payload["download"]["output_path"])
     elif args.area == "log" and args.action == "decode":
         payload = decode_imported_log(conn, args.log_id, output_dir=args.output_dir, decoder_command=args.decoder_command)
         _emit(payload, args.json)
@@ -185,6 +216,21 @@ def main(argv: list[str] | None = None) -> int:
             _print_json(payload)
         else:
             print(payload["duration_seconds"])
+    elif args.area == "log" and args.action == "segment-rows":
+        fields = [field.strip() for field in args.fields.split(",")] if args.fields else None
+        payload = get_segment_rows(
+            conn,
+            log_id=args.log_id,
+            segment_kind=args.segment_kind,
+            segment_index=args.segment_index,
+            fields=fields,
+            pad_rows=args.pad_rows,
+            max_rows=args.max_rows,
+        )
+        if args.json:
+            _print_json(payload)
+        else:
+            print(len(payload["rows"]))
     elif args.area == "log" and args.action == "list":
         sql = "SELECT id, build_id, managed_path, sha256, size_bytes, parse_status, imported_at FROM blackbox_logs"
         params = ()

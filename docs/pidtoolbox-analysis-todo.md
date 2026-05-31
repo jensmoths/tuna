@@ -68,6 +68,8 @@ PIDtoolbox is known for spectral analysis and frequency-vs-throttle views. Tuna 
 - Detect excessive filtering from lag/response degradation.
 - Detect insufficient filtering from D-term/noise metrics.
 - Summarize dynamic notch/RPM filter effectiveness when relevant fields are available.
+- Detect when required Blackbox fields/debug modes are missing and create a clear recommendation for the **Tuning Agent** to request a Blackbox logging configuration change.
+- Track which **Blackbox Logs** were captured before/after diagnostic Blackbox setting changes.
 
 ## TODO: motor and saturation analysis
 
@@ -111,3 +113,78 @@ PIDtoolbox is known for spectral analysis and frequency-vs-throttle views. Tuna 
 - High-rate segments include per-segment tracking error and rough gyro/D-term noise metrics.
 - Segments include `raw_data_ref` with CSV path, row range, and time range so the **Tuning Agent** can inspect the underlying decoded rows directly.
 - Operator Console analysis detail page now shows a concise segment table before raw segment JSON.
+
+
+## Implemented fourth pass
+
+- Added `tune log segment-rows --log-id ... --segment-kind ... --segment-index ... --json`.
+- Segment row extraction returns selected decoded CSV rows using segment `raw_data_ref`.
+- Supports selected fields, row padding, and max row limits so the **Tuning Agent** can inspect maneuver source data without loading an entire CSV.
+
+## Implemented fifth pass
+
+- Added timing summaries with nominal/effective logging rate estimates.
+- Added timing gap/dropout detection with row/time ranges and estimated missing sample counts.
+- Added first-pass FFT spectrum summaries for gyro, unfiltered gyro, D-term, motor, and debug fields.
+- Spectrum summaries include top frequency peaks and low/mid/high frequency band energy fractions.
+- Operator Console analysis detail page shows timing and spectrum JSON.
+
+## Implemented sixth pass
+
+- Added structured `analysis_capabilities` warnings that name missing Blackbox fields/debug modes limiting stronger **Diagnosis** evidence.
+- Added active/armed flight window detection with leading/trailing idle trim metadata and raw row references.
+- Added first-pass frequency-vs-throttle heatmap JSON for spectral fields using throttle bins.
+- Added performance regression tests for local analysis tools on large decoded CSV inputs.
+
+## Implemented seventh pass
+
+- Added `filter_analysis` JSON comparing filtered `gyroADC[*]` against unfiltered `gyroUnfilt[*]` by frequency band.
+- Filter analysis reports per-axis attenuation ratio, attenuation dB, and reduction fraction.
+- Added filter attenuation warnings for missing fields, insufficient samples, and low high-frequency attenuation.
+- Operator Console analysis detail page shows filter analysis JSON.
+
+## Implemented eighth pass
+
+- Added `noise_peaks` JSON with prominent gyro, unfiltered gyro, D-term, motor, and debug spectrum peaks.
+- Noise peaks include frequency region and conservative classifications such as possible frame resonance, motor harmonic, and D-term amplification.
+- Added first-pass `rpm_analysis` JSON using debug field spectra when available.
+- RPM analysis reports possible harmonic matches between debug peaks and gyro/D-term/motor peaks, or a structured missing-debug reason.
+
+## Implemented ninth pass
+
+- Added first-pass `step_response` JSON for roll, pitch, and yaw setpoint steps.
+- Step response events estimate latency, rise time, overshoot, undershoot, settling error, and bounce-back.
+- Per-axis step response summaries include event counts, mean response metrics, and flags such as sluggish, slow rise, overshooting, bounce-back, and poor settling.
+
+## Implemented tenth pass
+
+- Added first-pass `motor_analysis` JSON with per-motor min/max/mean output.
+- Motor analysis reports near-min/near-max samples and fractions, persistent offsets from fleet mean, and imbalance score.
+- Motor analysis includes throttle-bin summaries and warnings for saturation or persistent motor imbalance.
+
+## Implemented eleventh pass
+
+- Added first-pass `pid_term_analysis` JSON for P/I/D/feedforward terms by axis.
+- PID term analysis reports term ranges/means, D-term noise and spike counts, D-term spikes near throttle changes, I-term windup proxies, feedforward activity on setpoint transitions, and P/D balance proxies.
+- PID term analysis emits machine-readable flags for D-term spikes, throttle-coupled D-term spikes, possible I-term windup, inactive feedforward on setpoint steps, and P/D dominance.
+
+## Current noise/filter support
+
+- Implemented: rough time-domain noise proxies for gyro, unfiltered gyro, and D-term using sample-to-sample absolute deltas.
+- Implemented: per-segment rough gyro/D-term noise for high-rate segments.
+- Implemented: first-pass FFT spectrum summaries for gyro, unfiltered gyro, D-term, motor, and debug fields.
+- Implemented: first-pass frequency-vs-throttle heatmap JSON for gyro, unfiltered gyro, D-term, motor, and debug fields.
+- Implemented: filter attenuation estimates comparing filtered gyro vs unfiltered gyro by frequency band.
+- Implemented: first-pass RPM harmonic detection from debug-field spectral peaks.
+- Implemented: first-pass step response and time-domain setpoint response summaries.
+- Implemented: first-pass motor output, saturation, throttle-bin, and imbalance summaries.
+- Implemented: first-pass PID term, D-term spike, I-term windup, feedforward, and P/D balance summaries.
+- Not implemented yet: dynamic notch/RPM filter effectiveness summaries.
+
+## TODO: Blackbox logging configuration support
+
+- Implemented first pass: analysis warnings name missing Blackbox fields or debug modes needed for a stronger **Diagnosis**.
+- Add **Operator Task** kind for approving diagnostic Blackbox setting changes.
+- Add FCS helpers for reading and writing relevant Betaflight Blackbox settings.
+- Record Blackbox setting snapshots with imported **Blackbox Logs** so the **Tuning Agent** knows which analysis features are valid for each log.
+- Keep diagnostic Blackbox setting changes separate from **Tune Updates** unless the setting also affects flight behavior.

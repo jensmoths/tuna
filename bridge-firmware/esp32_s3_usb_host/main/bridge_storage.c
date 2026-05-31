@@ -9,10 +9,26 @@
 
 #include "bridge_config.h"
 #include "esp_log.h"
+#include "esp_vfs_fat.h"
+#include "wear_levelling.h"
 
 static const char *TAG = "bridge_storage";
+static wl_handle_t s_wl_handle = WL_INVALID_HANDLE;
 
 esp_err_t bridge_storage_init(void) {
+  if (s_wl_handle == WL_INVALID_HANDLE) {
+    const esp_vfs_fat_mount_config_t mount_config = {
+        .format_if_mount_failed = true,
+        .max_files = 4,
+        .allocation_unit_size = 4096,
+    };
+    esp_err_t err = esp_vfs_fat_spiflash_mount_rw_wl(BRIDGE_STORAGE_ROOT, "storage", &mount_config, &s_wl_handle);
+    if (err != ESP_OK) {
+      ESP_LOGE(TAG, "failed to mount Bridge storage: %s", esp_err_to_name(err));
+      return err;
+    }
+  }
+
   if (mkdir(BRIDGE_STORAGE_ROOT, 0775) != 0 && errno != EEXIST) {
     ESP_LOGW(TAG, "storage root not ready: %s", strerror(errno));
     return ESP_FAIL;
@@ -35,7 +51,11 @@ esp_err_t bridge_storage_list_blackbox_logs(bridge_storage_list_cb_t cb, void *c
     }
 
     char path[256];
-    snprintf(path, sizeof(path), "%s/%s", BRIDGE_STORAGE_ROOT, name);
+    int written = snprintf(path, sizeof(path), "%s/%s", BRIDGE_STORAGE_ROOT, name);
+    if (written < 0 || written >= (int)sizeof(path)) {
+      ESP_LOGW(TAG, "skipping Blackbox Log with too-long name: %s", name);
+      continue;
+    }
     struct stat st;
     if (stat(path, &st) == 0 && cb != NULL) {
       cb(name, (size_t)st.st_size, ctx);
@@ -52,7 +72,10 @@ esp_err_t bridge_storage_open_blackbox_log(const char *name, int *fd, size_t *si
   }
 
   char path[256];
-  snprintf(path, sizeof(path), "%s/%s", BRIDGE_STORAGE_ROOT, name);
+  int written = snprintf(path, sizeof(path), "%s/%s", BRIDGE_STORAGE_ROOT, name);
+  if (written < 0 || written >= (int)sizeof(path)) {
+    return ESP_ERR_INVALID_ARG;
+  }
 
   struct stat st;
   if (stat(path, &st) != 0) {

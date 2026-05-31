@@ -25,6 +25,6 @@
 #endif
 
 #ifndef BRIDGE_STORAGE_ROOT
-#define BRIDGE_STORAGE_ROOT "/sdcard/tuna-blackbox"
+#define BRIDGE_STORAGE_ROOT "/bridge"
 #endif
 

@@ -6,6 +6,7 @@ import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from tune.cli.main import main
 
@@ -65,6 +66,38 @@ class TuneCliTests(unittest.TestCase):
         self.assertEqual(status["builds"], 1)
         self.assertEqual(status["logs"], 1)
         self.assertEqual(status["iterations_open"], 0)
+
+    def test_log_transfer_command_delegates_to_fcs_transfer_with_validation(self):
+        output = self.root / "flight.bbl"
+        payload = {
+            "download": {
+                "output_path": str(output),
+                "starts_with_blackbox_header": True,
+            },
+            "operator_next_step": "Power-cycle/reset the FC back to USB CDC/MSP mode before further FC operations.",
+        }
+        with patch("tune.cli.main.transfer_blackbox_log_from_bridge", return_value=payload) as transfer:
+            result = self.run_cli_json(
+                "log",
+                "transfer",
+                "--bridge-host",
+                "bridge.local",
+                "--output",
+                str(output),
+                "--size",
+                "1048576",
+                "--timeout",
+                "12",
+            )
+        self.assertEqual(result, payload)
+        transfer.assert_called_once_with(
+            "bridge.local",
+            output_path=output,
+            size=1048576,
+            trigger_msc=True,
+            timeout_seconds=12.0,
+            resume=True,
+        )
 
 
 if __name__ == "__main__":

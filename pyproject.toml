@@ -3,7 +3,7 @@ name = "tuna-tune"
 version = "0.1.0"
 description = "Tuna durable state and helper tooling"
 requires-python = ">=3.10"
-dependencies = ["Flask>=3.0"]
+dependencies = ["Flask>=3.0", "numpy>=1.26"]
 
 [project.scripts]
 tune = "tune.cli.main:main"

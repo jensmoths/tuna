@@ -71,6 +71,10 @@ Decisions recorded before implementing the Tuna workflow model.
 ## Blackbox Log transfer and Import
 
 - **Post-flight Transfer** means moving completed **Blackbox Logs** from FC/Bridge storage to the **Host Computer** using FCS.
+- The Tuning Agent-facing command for v1 **Post-flight Transfer** is `tune log transfer --bridge-host ... --output ... --size ... --json`.
+- `tune log transfer` owns Bridge/FC mode validation, optional Betaflight `msc` triggering, waiting for MSC raw readiness, raw MSC download with resume sidecars, trimming leading padding before the Blackbox header, and validating that the output starts with `H Product:Blackbox`.
+- After successful raw MSC transfer, the **Operator** must reset/power-cycle the FC back to USB CDC/MSP mode before further FC operations; current v1 cannot reliably return from MSC to CDC through FCS alone.
+- If raw MSC transfer is unavailable, FCS MSP dataflash download remains the slower fallback path.
 - **Import** means registering a transferred **Blackbox Log** in Tuna state, associating it with a **Build**, making it analyzable, and extracting metadata.
 - The **Tuning Agent** performs Import; the **Operator** does not have to manually import files as a normal workflow step.
 - Import should attempt metadata extraction from the beginning.

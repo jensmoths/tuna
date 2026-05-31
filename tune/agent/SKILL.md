@@ -91,6 +91,35 @@ tune --db tune.sqlite3 loop list --build-id 1 --json
 
 Use FCS tools for **Post-flight Transfer** from FC/Bridge to the **Host Computer**. Do not use raw Bridge/protocol access unless specifically debugging FCS/Bridge behavior.
 
+Preferred v1 workflow for ESP32-S3 USB-host **Bridge** raw MSC transfer: use `tune log transfer`. The CLI performs Bridge/FC mode validation, triggers MSC mode when needed, downloads with resume sidecars, trims leading padding before the Blackbox header, and validates that the resulting file starts with `H Product:Blackbox`.
+
+```bash
+tune --db tune.sqlite3 log transfer \
+  --bridge-host tuna-bridge-usb \
+  --timeout 60 \
+  --size 2097152 \
+  --output transferred-logs/current-flight.bbl \
+  --json
+```
+
+Use a stable file name under `transferred-logs/`. For a full transfer, choose `--size` from FC/MSC capacity or known log bounds when available. If the transfer times out or resets, repeat the same command; do not delete the `.part` or `.state.json` files unless intentionally starting over.
+
+Required success evidence in JSON:
+
+- `download.starts_with_blackbox_header` is `true`
+- `download.header_offset` is `>= 0`
+- `download.written_bytes` is greater than zero
+- `msc_status` includes `msc_raw=1`
+
+After successful transfer, ask the **Operator** to power-cycle/reset the FC back to USB CDC/MSP mode before further FC operations. Current v1 cannot reliably return the FC from MSC to CDC through FCS alone.
+
+Fallback path: if the ESP32-S3 raw MSC path is unavailable, use the slower read-only MSP dataflash downloader through FCS tooling and then Import the resulting file:
+
+```bash
+PYTHONPATH=fcs-host python3 fcs-host/fcs_blackbox_download.py tuna-bridge-usb \
+  --output transferred-logs/current-flight.bbl
+```
+
 ### 4. Import transferred Blackbox Logs
 
 The **Tuning Agent** performs **Import** after transfer. Import records the file, hashes it, deduplicates it, associates it with the **Build**, and extracts metadata.
@@ -206,4 +235,28 @@ Before proposing a **Tune Update**:
 - Prefer no change or more data over unsupported changes.
 - Ensure all proposed setting values are absolute target values.
 - Include generated Betaflight CLI text only as an artifact derived from structured settings.
+
+## Blackbox logging configuration
+
+The **Tuning Agent** may need different Betaflight Blackbox settings so future **Blackbox Logs** contain the data required by Tuna analysis tools.
+
+Examples include requesting fields or modes needed for:
+
+- gyro and unfiltered gyro comparison
+- D-term noise analysis
+- RPM/filter analysis
+- debug modes relevant to filters, RPM, or scheduler behavior
+- logging rate or denominator changes
+
+Rules:
+
+- Treat Blackbox configuration changes as diagnostic/logging changes, not as **Tune Updates**, unless they also alter flight behavior.
+- Do not silently change FC configuration. Create an **Operator Task** explaining what Blackbox setting change is needed and why.
+- Require **Operator** approval before writing Blackbox/logging configuration to the FC.
+- Use **FCS** for write-back after approval; the Operator Console must not write to the FC directly.
+- Record success or failure in Tuna state so later **Diagnoses** know which logs were captured with which settings.
+- Prefer the smallest logging change that gives the analysis tool the missing data.
+- If the requested Blackbox setting could affect performance, storage use, or flight behavior, call that out explicitly in the **Operator Task**.
+
+When analysis is limited by missing fields, say so in the **Diagnosis** or next-step recommendation instead of guessing.
 

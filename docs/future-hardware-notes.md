@@ -14,6 +14,19 @@ Candidate directions:
 
 Keep this as future work; current v1 remains **Post-flight Transfer** over the existing UART Bridge/FCS path unless hardware changes.
 
+## Investigate returning FC from MSC mode to USB CDC mode
+
+When Betaflight is put into mass-storage mode, the FC re-enumerates as USB MSC and the normal USB CDC/MSP/CLI command channel disappears. Investigate whether Tuna can return the FC to normal USB CDC mode without a manual power cycle/reset.
+
+Candidate directions:
+
+- Check whether Betaflight or common bootloaders expose a safe MSC eject/reset mechanism.
+- Test whether USB detach/reattach from the ESP32-S3 host side causes the FC to reboot into normal mode.
+- Evaluate whether target FCs expose a reset line/pad that future **Bridge** hardware can control.
+- Document whether manual FC reset/power-cycle is required after MSC **Post-flight Transfer** in v1.
+
+Until this is understood, assume that entering MSC mode is one-way from the FCS perspective and requires a physical reset/power-cycle to regain USB CDC/MSP access.
+
 ## Current state as of this repo snapshot
 
 - ESP8266 UART Bridge works for MSP passthrough and read-only Blackbox dataflash transfer.

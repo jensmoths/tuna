@@ -25,7 +25,7 @@ static void usb_msp_on_rx(const uint8_t *data, size_t len, void *ctx) {
 
 void app_main(void) {
   ESP_ERROR_CHECK(nvs_flash_init());
-  ESP_ERROR_CHECK(wifi_station_start());
+  ESP_ERROR_CHECK(bridge_wifi_station_start());
 
   bridge_storage_init();
   usb_msp_transport_init();

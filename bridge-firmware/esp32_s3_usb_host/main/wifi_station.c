@@ -28,7 +28,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
   }
 }
 
-esp_err_t wifi_station_start(void) {
+esp_err_t bridge_wifi_station_start(void) {
   s_wifi_events = xEventGroupCreate();
 
   ESP_ERROR_CHECK(esp_netif_init());

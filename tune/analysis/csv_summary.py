@@ -4,39 +4,39 @@ import csv
 from pathlib import Path
 from typing import Any
 
-AXES = {0: "roll", 1: "pitch", 2: "yaw"}
-TRACKING_THRESHOLD = 50.0
-HIGH_RATE_THRESHOLD = 200.0
-MOTOR_SATURATION_THRESHOLD = 1990.0
-MIN_USEFUL_DURATION_SECONDS = 5.0
-SEGMENT_GAP_US = 200_000.0
-MIN_SEGMENT_DURATION_US = 100_000.0
-THROTTLE_PUNCH_THRESHOLD = 1700.0
 
-
-
-def _to_float(value: str) -> float | None:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _normalize_field(name: str) -> str:
-    name = name.strip()
-    if " (" in name:
-        name = name.split(" (", 1)[0]
-    return name
-
-
-def _track_range(ranges: dict[str, dict[str, float]], name: str, value: float) -> None:
-    current = ranges.setdefault(name, {"min": value, "max": value})
-    current["min"] = min(current["min"], value)
-    current["max"] = max(current["max"], value)
-
-
-def _empty_axis_metric() -> dict[str, float | int | None]:
-    return {"samples": 0, "mean_abs_error": None, "max_abs_error": None, "samples_over_threshold": 0}
+from .capabilities import summarize_analysis_capabilities as _analysis_capabilities
+from .common import (
+    ACTIVE_MOTOR_THRESHOLD,
+    ACTIVE_THROTTLE_THRESHOLD,
+    AXES,
+    GAP_MULTIPLIER,
+    HIGH_RATE_THRESHOLD,
+    MIN_SEGMENT_DURATION_US,
+    MIN_USEFUL_DURATION_SECONDS,
+    MOTOR_SATURATION_THRESHOLD,
+    SEGMENT_GAP_US,
+    SPECTRAL_PREFIXES,
+    THROTTLE_PUNCH_THRESHOLD,
+    TRACKING_THRESHOLD,
+    empty_axis_metric as _empty_axis_metric,
+    normalize_field as _normalize_field,
+    throttle_bin_label as _throttle_bin_label,
+    to_float as _to_float,
+    track_range as _track_range,
+    truthy_field as _truthy_field,
+)
+from .filters import summarize_filter_analysis as _summarize_filter_analysis
+from .motors import summarize_motor_analysis as _summarize_motor_analysis
+from .pid_terms import summarize_pid_term_analysis as _summarize_pid_term_analysis
+from .spectrum import (
+    summarize_frequency_throttle_heatmap as _summarize_frequency_throttle_heatmap,
+    summarize_noise_peaks as _summarize_noise_peaks,
+    summarize_rpm_analysis as _summarize_rpm_analysis,
+    summarize_spectrum as _summarize_spectrum,
+)
+from .step_response import summarize_step_response as _summarize_step_response
+from .timing import summarize_timing as _summarize_timing
 
 
 def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[str, Any]:
@@ -56,6 +56,21 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
     high_rate_segments = []
     throttle_builder = None
     throttle_segments = []
+    previous_time: float | None = None
+    previous_time_row: int | None = None
+    sample_intervals_us: list[float] = []
+    time_intervals: list[tuple[int, int, float, float, float]] = []
+    non_monotonic_time_samples = 0
+    spectral_values: dict[str, list[float]] = {}
+    heatmap_values: dict[str, dict[str, list[float]]] = {}
+    armed_segments = []
+    armed_builder = None
+    detected_active_rows = 0
+    active_detection_methods: set[str] = set()
+    step_response_samples = {axis: [] for axis in AXES.values()}
+    motor_values: dict[str, list[float]] = {}
+    motor_throttle_bins: dict[str, dict[str, list[float]]] = {}
+    pid_samples = {axis: [] for axis in AXES.values()}
 
     with csv_path.open(newline="", errors="replace") as handle:
         reader = csv.DictReader(handle)
@@ -73,16 +88,30 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
             if time_value is not None:
                 first_time = time_value if first_time is None else first_time
                 last_time = time_value
+                if previous_time is not None:
+                    interval_us = time_value - previous_time
+                    if interval_us > 0:
+                        sample_intervals_us.append(interval_us)
+                        if previous_time_row is not None:
+                            time_intervals.append((previous_time_row, row_count, previous_time, time_value, interval_us))
+                    else:
+                        non_monotonic_time_samples += 1
+                previous_time = time_value
+                previous_time_row = row_count
 
             numeric: dict[str, float] = {}
             deltas: dict[str, float] = {}
             for name, value_text in row.items():
-                if not name.startswith(("gyroADC[", "gyroUnfilt[", "setpoint[", "motor[", "axisP[", "axisI[", "axisD[", "axisF[", "rcCommand[")):
+                if not name.startswith(("gyroADC[", "gyroUnfilt[", "setpoint[", "motor[", "axisP[", "axisI[", "axisD[", "axisF[", "rcCommand[", "debug[")):
                     continue
                 value = _to_float(value_text)
                 if value is None:
                     continue
                 numeric[name] = value
+                if name.startswith(SPECTRAL_PREFIXES):
+                    spectral_values.setdefault(name, []).append(value)
+                if name.startswith("motor["):
+                    motor_values.setdefault(name, []).append(value)
                 _track_range(ranges, name, value)
                 if name.startswith(("gyroADC[", "gyroUnfilt[", "axisD[")):
                     previous = previous_values.get(name)
@@ -120,9 +149,63 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
                 motor_saturation_samples += 1
 
             if time_value is not None:
+                explicit_armed = None
+                for armed_field in ("armed", "isArmed", "armState"):
+                    if armed_field in row:
+                        explicit_armed = _truthy_field(row.get(armed_field))
+                        if explicit_armed is not None:
+                            break
+                throttle = numeric.get("rcCommand[3]")
+                motor_active = any(name.startswith("motor[") and value > ACTIVE_MOTOR_THRESHOLD for name, value in numeric.items())
+                throttle_active_for_flight = throttle is not None and throttle > ACTIVE_THROTTLE_THRESHOLD
+                active_flight = explicit_armed if explicit_armed is not None else motor_active or throttle_active_for_flight
+                if active_flight:
+                    current_detection_method = "explicit_armed_field" if explicit_armed is not None else "motor_or_throttle_activity"
+                    detected_active_rows += 1
+                    active_detection_methods.add(current_detection_method)
+                    if armed_builder is None or time_value - armed_builder["last_time_us"] > SEGMENT_GAP_US:
+                        if armed_builder is not None:
+                            armed_segments.append(armed_builder)
+                        armed_builder = {
+                            "start_time_us": time_value,
+                            "end_time_us": time_value,
+                            "last_time_us": time_value,
+                            "start_row": row_count,
+                            "end_row": row_count,
+                            "samples": 0,
+                            "detection_methods": set(),
+                        }
+                    armed_builder["end_time_us"] = time_value
+                    armed_builder["last_time_us"] = time_value
+                    armed_builder["end_row"] = row_count
+                    armed_builder["samples"] += 1
+                    armed_builder["detection_methods"].add(current_detection_method)
+
+                if throttle is not None:
+                    throttle_bin = _throttle_bin_label(throttle)
+                    if throttle_bin is not None:
+                        for name, value in numeric.items():
+                            if name.startswith(SPECTRAL_PREFIXES):
+                                heatmap_values.setdefault(name, {}).setdefault(throttle_bin, []).append(value)
+                            if name.startswith("motor["):
+                                motor_throttle_bins.setdefault(name, {}).setdefault(throttle_bin, []).append(value)
+
                 for index, axis in AXES.items():
                     setpoint = numeric.get(f"setpoint[{index}]")
                     gyro = numeric.get(f"gyroADC[{index}]")
+                    if setpoint is not None and gyro is not None:
+                        step_response_samples[axis].append((time_value, setpoint, gyro))
+                    pid_sample = {
+                        "time_us": time_value,
+                        "setpoint": setpoint,
+                        "throttle": throttle,
+                        "P": numeric.get(f"axisP[{index}]"),
+                        "I": numeric.get(f"axisI[{index}]"),
+                        "D": numeric.get(f"axisD[{index}]"),
+                        "F": numeric.get(f"axisF[{index}]"),
+                    }
+                    if any(pid_sample[term] is not None for term in ("P", "I", "D", "F")):
+                        pid_samples[axis].append(pid_sample)
                     active = setpoint is not None and abs(setpoint) >= HIGH_RATE_THRESHOLD
                     builder = high_rate_builders[axis]
                     if active:
@@ -176,7 +259,6 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
                             builder["motor_saturation_samples"] += 1
                         high_rate_builders[axis] = builder
 
-                throttle = numeric.get("rcCommand[3]")
                 throttle_active = throttle is not None and throttle >= THROTTLE_PUNCH_THRESHOLD
                 if throttle_active:
                     if throttle_builder is None or time_value - throttle_builder["last_time_us"] > SEGMENT_GAP_US:
@@ -206,6 +288,8 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
             high_rate_segments.append(builder)
     if throttle_builder is not None:
         throttle_segments.append(throttle_builder)
+    if armed_builder is not None:
+        armed_segments.append(armed_builder)
 
     def finish_segments(segments):
         finished = []
@@ -250,6 +334,32 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
     high_rate_segments = finish_segments(high_rate_segments)
     throttle_segments = finish_segments(throttle_segments)
 
+    def finish_armed_segments(segments):
+        finished = []
+        for segment in segments:
+            start_time_seconds = segment["start_time_us"] / 1_000_000.0
+            end_time_seconds = segment["end_time_us"] / 1_000_000.0
+            item = {
+                "start_row": segment["start_row"],
+                "end_row": segment["end_row"],
+                "samples": segment["samples"],
+                "start_time_seconds": start_time_seconds,
+                "end_time_seconds": end_time_seconds,
+                "duration_seconds": (segment["end_time_us"] - segment["start_time_us"]) / 1_000_000.0,
+                "detection_methods": sorted(segment["detection_methods"]),
+                "raw_data_ref": {
+                    "csv_path": str(csv_path),
+                    "start_row": segment["start_row"],
+                    "end_row": segment["end_row"],
+                    "start_time_seconds": start_time_seconds,
+                    "end_time_seconds": end_time_seconds,
+                },
+            }
+            finished.append(item)
+        return finished
+
+    armed_segments = finish_armed_segments(armed_segments)
+
     required = ["time", "gyroADC[0]", "gyroADC[1]", "gyroADC[2]", "setpoint[0]", "setpoint[1]", "setpoint[2]"]
     missing = [name for name in required if name not in fields]
     if missing:
@@ -258,6 +368,66 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
     duration_seconds = None
     if first_time is not None and last_time is not None and last_time >= first_time:
         duration_seconds = (last_time - first_time) / 1_000_000.0
+
+    timing = _summarize_timing(sample_intervals_us, duration_seconds, row_count)
+    if timing["nominal_interval_us"] is not None:
+        gap_threshold_us = float(timing["nominal_interval_us"]) * GAP_MULTIPLIER
+        gaps = []
+        for start_row, end_row, start_time, end_time, interval_us in time_intervals:
+            if interval_us > gap_threshold_us:
+                estimated_missing = max(1, round(interval_us / float(timing["nominal_interval_us"])) - 1)
+                gaps.append({
+                    "start_row": start_row,
+                    "end_row": end_row,
+                    "start_time_seconds": start_time / 1_000_000.0,
+                    "end_time_seconds": end_time / 1_000_000.0,
+                    "duration_seconds": interval_us / 1_000_000.0,
+                    "estimated_missing_samples": estimated_missing,
+                })
+        timing["gap_threshold_us"] = gap_threshold_us
+        timing["gaps"] = gaps
+        timing["gap_count"] = len(gaps)
+        timing["estimated_missing_samples"] = sum(gap["estimated_missing_samples"] for gap in gaps)
+    else:
+        timing["gap_threshold_us"] = None
+        timing["gaps"] = []
+        timing["gap_count"] = 0
+        timing["estimated_missing_samples"] = 0
+    timing["non_monotonic_time_samples"] = non_monotonic_time_samples
+    spectrum = _summarize_spectrum(spectral_values, timing["nominal_logging_rate_hz"])
+    frequency_throttle_heatmap = _summarize_frequency_throttle_heatmap(heatmap_values, timing["nominal_logging_rate_hz"], "rcCommand[3]" in fields)
+    filter_analysis = _summarize_filter_analysis(spectral_values, timing["nominal_logging_rate_hz"])
+    noise_peaks = _summarize_noise_peaks(spectrum)
+    rpm_analysis = _summarize_rpm_analysis(spectrum)
+    step_response = _summarize_step_response(step_response_samples)
+    motor_analysis = _summarize_motor_analysis(motor_values, motor_throttle_bins)
+    pid_term_analysis = _summarize_pid_term_analysis(pid_samples, step_response)
+    capabilities = _analysis_capabilities(fields, timing)
+
+    active_window = None
+    if armed_segments:
+        active_start = armed_segments[0]
+        active_end = armed_segments[-1]
+        leading_idle_rows = max(0, active_start["start_row"] - 1)
+        trailing_idle_rows = max(0, row_count - active_end["end_row"])
+        active_window = {
+            "start_row": active_start["start_row"],
+            "end_row": active_end["end_row"],
+            "start_time_seconds": active_start["start_time_seconds"],
+            "end_time_seconds": active_end["end_time_seconds"],
+            "duration_seconds": active_end["end_time_seconds"] - active_start["start_time_seconds"],
+            "leading_idle_rows": leading_idle_rows,
+            "trailing_idle_rows": trailing_idle_rows,
+            "leading_idle_seconds": active_start["start_time_seconds"] - (first_time / 1_000_000.0) if first_time is not None else None,
+            "trailing_idle_seconds": (last_time / 1_000_000.0) - active_end["end_time_seconds"] if last_time is not None else None,
+            "raw_data_ref": {
+                "csv_path": str(csv_path),
+                "start_row": active_start["start_row"],
+                "end_row": active_end["end_row"],
+                "start_time_seconds": active_start["start_time_seconds"],
+                "end_time_seconds": active_end["end_time_seconds"],
+            },
+        }
 
     has_motor = any(field.startswith("motor[") for field in fields)
     has_pid_terms = all(any(field.startswith(prefix) for field in fields) for prefix in ("axisP[", "axisI[", "axisD["))
@@ -268,6 +438,12 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
         quality_warnings.append("No motor fields found")
     if not has_pid_terms:
         quality_warnings.append("PID term fields are incomplete")
+    if timing["gap_count"]:
+        quality_warnings.append(
+            f"Detected {timing['gap_count']} timing gap/dropout(s); estimated {timing['estimated_missing_samples']} missing sample(s)"
+        )
+    if non_monotonic_time_samples:
+        quality_warnings.append(f"Detected {non_monotonic_time_samples} non-monotonic timestamp sample(s)")
 
     tracking = {}
     for axis, acc in tracking_acc.items():
@@ -312,8 +488,24 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
             "motor_saturation_samples": motor_saturation_samples,
             "throttle_range": ranges.get("rcCommand[3]"),
         },
+        "flight": {
+            "active_window": active_window,
+            "armed_segments": armed_segments,
+            "detected_active_rows": detected_active_rows,
+            "detection_methods": sorted(active_detection_methods),
+        },
+        "analysis_capabilities": capabilities,
+        "timing": timing,
         "tracking": tracking,
         "rough_noise": rough_noise,
+        "spectrum": spectrum,
+        "frequency_throttle_heatmap": frequency_throttle_heatmap,
+        "filter_analysis": filter_analysis,
+        "noise_peaks": noise_peaks,
+        "rpm_analysis": rpm_analysis,
+        "step_response": step_response,
+        "motor_analysis": motor_analysis,
+        "pid_term_analysis": pid_term_analysis,
         "segments": {
             "high_rate": high_rate_segments,
             "throttle_punch": throttle_segments,

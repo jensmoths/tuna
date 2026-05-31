@@ -1,0 +1,4 @@
+dependencies:
+  idf: ">=5.5"
+  usb_host_cdc_acm: "2.*"
+  usb_host_msc: "^1.2.0"
