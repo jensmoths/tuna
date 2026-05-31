@@ -4,6 +4,7 @@ import dataclasses
 import json
 import socket
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 
@@ -106,24 +107,17 @@ def _write_resume_state(output_path: Path, raw_bytes_downloaded: int, header_off
     _state_path(output_path).write_text(json.dumps({"raw_bytes_downloaded": raw_bytes_downloaded, "header_offset": header_offset}))
 
 
-def download_msc_raw(
+def _read_msc_raw_range(
     host: str,
     *,
-    output_path: Path,
+    port: int,
+    timeout_seconds: float,
+    offset: int,
     size: int,
-    port: int = 5762,
-    timeout_seconds: float = 60.0,
-    resume: bool = True,
-    keep_leading_padding: bool = False,
-) -> dict[str, object]:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    part_path = _part_path(output_path)
-    raw_bytes_downloaded, header_offset = _load_resume_state(output_path) if resume else (0, -1)
-    requested = max(size - raw_bytes_downloaded, 0)
-
+) -> bytes:
     with socket.create_connection((host, port), timeout=timeout_seconds) as sock:
         sock.settimeout(timeout_seconds)
-        sock.sendall(f"MSC_GET_RAW {raw_bytes_downloaded} {requested}\n".encode("ascii"))
+        sock.sendall(f"MSC_GET_RAW {offset} {size}\n".encode("ascii"))
         header = _recv_line(sock)
         if not header.startswith(b"DATA "):
             raise RuntimeError(f"unexpected Bridge reply {header!r}")
@@ -134,13 +128,85 @@ def download_msc_raw(
             if not chunk:
                 break
             data.extend(chunk)
-
     if len(data) != total:
         raise RuntimeError(f"short read got={len(data)} expected={total}")
+    return bytes(data)
 
-    with part_path.open("ab") as part:
-        part.write(data)
-    raw_bytes_downloaded += len(data)
+
+def download_msc_raw(
+    host: str,
+    *,
+    output_path: Path,
+    size: int,
+    port: int = 5762,
+    timeout_seconds: float = 60.0,
+    resume: bool = True,
+    keep_leading_padding: bool = False,
+    chunk_size: int = 1024 * 1024,
+    max_attempts: int = 3,
+    progress: Callable[[dict[str, object]], None] | None = None,
+) -> dict[str, object]:
+    if size < 0:
+        raise ValueError("size must be non-negative")
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    if max_attempts <= 0:
+        raise ValueError("max_attempts must be positive")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    part_path = _part_path(output_path)
+    raw_bytes_downloaded, header_offset = _load_resume_state(output_path) if resume else (0, -1)
+
+    progress_events: list[dict[str, object]] = []
+    chunks_completed = 0
+    retries = 0
+    while raw_bytes_downloaded < size:
+        requested = min(chunk_size, size - raw_bytes_downloaded)
+        last_error: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                data = _read_msc_raw_range(
+                    host,
+                    port=port,
+                    timeout_seconds=timeout_seconds,
+                    offset=raw_bytes_downloaded,
+                    size=requested,
+                )
+                break
+            except (OSError, RuntimeError) as exc:
+                last_error = exc
+                if attempt >= max_attempts:
+                    raise RuntimeError(
+                        f"MSC raw read failed after {max_attempts} attempts at offset {raw_bytes_downloaded}: {exc}"
+                    ) from exc
+                retries += 1
+                time.sleep(min(0.25 * attempt, 2.0))
+        else:  # pragma: no cover - defensive; for-loop either breaks or raises.
+            raise RuntimeError(f"MSC raw read failed at offset {raw_bytes_downloaded}: {last_error}")
+
+        with part_path.open("ab") as part:
+            part.write(data)
+        raw_bytes_downloaded += len(data)
+        chunks_completed += 1
+
+        raw = part_path.read_bytes()
+        if header_offset < 0:
+            header_offset = raw.find(BLACKBOX_HEADER)
+        output_bytes = raw if keep_leading_padding or header_offset < 0 else raw[header_offset:]
+        output_path.write_bytes(output_bytes)
+        _write_resume_state(output_path, raw_bytes_downloaded, header_offset)
+
+        event = {
+            "raw_bytes_downloaded": raw_bytes_downloaded,
+            "requested_size": size,
+            "written_bytes": len(output_bytes),
+            "header_offset": header_offset,
+            "chunks_completed": chunks_completed,
+            "retries": retries,
+        }
+        progress_events.append(event)
+        if progress is not None:
+            progress(event)
 
     raw = part_path.read_bytes()
     if header_offset < 0:
@@ -157,6 +223,10 @@ def download_msc_raw(
         "header_offset": header_offset,
         "written_bytes": len(output_bytes),
         "starts_with_blackbox_header": output_bytes.startswith(BLACKBOX_HEADER),
+        "chunk_size": chunk_size,
+        "chunks_completed": chunks_completed,
+        "retries": retries,
+        "progress_events": progress_events,
     }
 
 
@@ -168,6 +238,9 @@ def transfer_blackbox_log_from_bridge(
     trigger_msc: bool = True,
     timeout_seconds: float = 60.0,
     resume: bool = True,
+    chunk_size: int = 1024 * 1024,
+    max_attempts: int = 3,
+    progress: Callable[[dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
     initial = read_bridge_status(host, timeout_seconds=min(timeout_seconds, 8.0))
     transcript = ""
@@ -186,6 +259,9 @@ def transfer_blackbox_log_from_bridge(
         size=size,
         timeout_seconds=timeout_seconds,
         resume=resume,
+        chunk_size=chunk_size,
+        max_attempts=max_attempts,
+        progress=progress,
     )
     if not download["starts_with_blackbox_header"]:
         raise RuntimeError(f"transferred file does not start with Blackbox header: {download}")

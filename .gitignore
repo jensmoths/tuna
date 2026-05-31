@@ -223,6 +223,11 @@ reference-logs/
 *.bbl
 *.bbl.part
 
+# Tuna local runtime state/artifacts
+tune.sqlite3
+tune.sqlite3-*
+tune-data/
+
 # ESP8266 SDK build artifacts
 bridge-firmware/esp8266_sdk/bin/
 bridge-firmware/esp8266_sdk/project/.output/

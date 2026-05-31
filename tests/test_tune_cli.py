@@ -97,7 +97,48 @@ class TuneCliTests(unittest.TestCase):
             trigger_msc=True,
             timeout_seconds=12.0,
             resume=True,
+            chunk_size=1024 * 1024,
+            max_attempts=3,
+            progress=None,
         )
+
+    def test_log_analyze_json_is_concise_and_can_write_full_json_file(self):
+        self.run_cli_json("db", "init")
+        build = self.run_cli_json("build", "create", "5 inch")
+        log = self.run_cli_json(
+            "log",
+            "import",
+            "reference-logs/btfl_001.bbl",
+            "--build-id",
+            str(build["build_id"]),
+            "--storage-dir",
+            str(self.root / "logs"),
+        )
+        csv_path = self.root / "log.csv"
+        csv_path.write_text(
+            "time,gyroADC[0],gyroADC[1],gyroADC[2],setpoint[0],setpoint[1],setpoint[2],motor[0],rcCommand[3],axisP[0],axisI[0],axisD[0]\n"
+            "0,0,0,0,0,0,0,1000,1000,0,0,0\n"
+            "500000,10,0,0,20,0,0,1200,1100,1,0,0\n"
+        )
+        full_json = self.root / "analysis.json"
+
+        result = self.run_cli_json(
+            "log",
+            "analyze",
+            "--log-id",
+            str(log["log_id"]),
+            "--csv-path",
+            str(csv_path),
+            "--output-json-file",
+            str(full_json),
+        )
+
+        self.assertEqual(result["log_id"], log["log_id"])
+        self.assertEqual(result["row_count"], 2)
+        self.assertIn("analysis_id", result)
+        self.assertEqual(result["analysis_json_file"], str(full_json))
+        self.assertNotIn("ranges", result)
+        self.assertIn("ranges", json.loads(full_json.read_text()))
 
 
 if __name__ == "__main__":

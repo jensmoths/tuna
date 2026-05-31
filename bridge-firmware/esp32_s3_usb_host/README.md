@@ -99,12 +99,13 @@ Validated with a Betaflight FC powered separately:
 - `MSC_GET_RAW 1048576` returns `DATA 1048576` and reads from offset zero
 - `MSC_GET_RAW 1048576 1048576` returns `DATA 1048576` and reads a 1 MiB range from offset 1 MiB
 - Host resume helper validated by continuing a raw transfer from 1 MiB to 2 MiB and writing a trimmed `.bbl` starting with `H Product:Blackbox`
+- Host full-size transfer validated by downloading 16 MiB in 1 MiB chunks, trimming the Blackbox header at raw offset `562176`, and manually opening the resulting `transferred-logs/full-current-flight.bbl` in Blackbox Explorer
 - `STATUS_VERBOSE` reports full USB MSC diagnostics including `msc_sectors`, `msc_sector_size`, and `msc_err`
 
 Still hardware/API integration work:
 
-- turn `MSC_GET_RAW` into a production **Post-flight Transfer** path with progress display and retry policy
-- use FC-reported storage/log bounds to avoid downloading unnecessary leading/trailing raw padding
+- validate automatic retry/resume after an intentionally interrupted full-size transfer
+- optionally use FC-reported storage/log bounds or header-offset scanning to avoid downloading unnecessary leading/trailing raw padding
 - decide whether this board needs an external 5V path/switch for FC power from Bridge hardware, or document separate FC power as the required v1 setup
 - reduce `STATUS_VERBOSE` diagnostics once hardware bring-up is complete
 

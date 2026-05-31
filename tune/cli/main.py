@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -77,8 +78,11 @@ def main(argv: list[str] | None = None) -> int:
     log_transfer.add_argument("--output", required=True)
     log_transfer.add_argument("--size", type=int, required=True)
     log_transfer.add_argument("--timeout", type=float, default=60.0)
+    log_transfer.add_argument("--chunk-size", type=int, default=1024 * 1024, help="raw MSC bytes to request per Bridge range read")
+    log_transfer.add_argument("--max-attempts", type=int, default=3, help="retry attempts for each raw MSC range read")
     log_transfer.add_argument("--no-trigger-msc", action="store_true", help="require the Bridge to already be in MSC raw mode")
     log_transfer.add_argument("--no-resume", action="store_true", help="do not use .part/.state.json resume sidecars")
+    log_transfer.add_argument("--progress", action="store_true", help="print transfer progress to stderr")
     _add_json(log_transfer)
     log_decode = log_sub.add_parser("decode")
     log_decode.add_argument("--log-id", type=int, required=True)
@@ -88,6 +92,8 @@ def main(argv: list[str] | None = None) -> int:
     log_analyze = log_sub.add_parser("analyze")
     log_analyze.add_argument("--log-id", type=int, required=True)
     log_analyze.add_argument("--csv-path")
+    log_analyze.add_argument("--output-json-file", help="write the full analysis JSON to a file and keep CLI JSON concise")
+    log_analyze.add_argument("--full-json", action="store_true", help="print the full analysis JSON to stdout")
     _add_json(log_analyze)
     segment_rows = log_sub.add_parser("segment-rows")
     segment_rows.add_argument("--log-id", type=int, required=True)
@@ -195,6 +201,13 @@ def main(argv: list[str] | None = None) -> int:
         payload["warnings"] = json.loads(payload.pop("warnings_json"))
         _emit(payload, args.json)
     elif args.area == "log" and args.action == "transfer":
+        def progress(event: dict[str, object]) -> None:
+            print(
+                f"raw={event['raw_bytes_downloaded']}/{event['requested_size']} "
+                f"written={event['written_bytes']} retries={event['retries']}",
+                file=sys.stderr,
+            )
+
         payload = transfer_blackbox_log_from_bridge(
             args.bridge_host,
             output_path=Path(args.output),
@@ -202,6 +215,9 @@ def main(argv: list[str] | None = None) -> int:
             trigger_msc=not args.no_trigger_msc,
             timeout_seconds=args.timeout,
             resume=not args.no_resume,
+            chunk_size=args.chunk_size,
+            max_attempts=args.max_attempts,
+            progress=progress if args.progress else None,
         )
         if args.json:
             _print_json(payload)
@@ -212,10 +228,34 @@ def main(argv: list[str] | None = None) -> int:
         _emit(payload, args.json)
     elif args.area == "log" and args.action == "analyze":
         payload = analyze_imported_log(conn, args.log_id, csv_path=args.csv_path)
+        analysis_row = conn.execute(
+            "SELECT id, analyzed_at FROM log_analyses WHERE log_id = ? ORDER BY analyzed_at DESC, id DESC LIMIT 1",
+            (args.log_id,),
+        ).fetchone()
+        output_json_file = None
+        if args.output_json_file:
+            output_path = Path(args.output_json_file)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+            output_json_file = str(output_path)
+        concise_payload = {
+            "log_id": args.log_id,
+            "analysis_id": analysis_row["id"] if analysis_row else None,
+            "analyzed_at": analysis_row["analyzed_at"] if analysis_row else None,
+            "row_count": payload.get("row_count"),
+            "duration_seconds": payload.get("duration_seconds"),
+            "quality": payload.get("quality"),
+            "warnings": payload.get("warnings", []),
+            "analysis_json_file": output_json_file,
+            "full_analysis_stored": True,
+        }
         if args.json:
-            _print_json(payload)
+            _print_json(payload if args.full_json else concise_payload)
         else:
-            print(payload["duration_seconds"])
+            if output_json_file:
+                print(output_json_file)
+            else:
+                print(payload["duration_seconds"])
     elif args.area == "log" and args.action == "segment-rows":
         fields = [field.strip() for field in args.fields.split(",")] if args.fields else None
         payload = get_segment_rows(

@@ -176,13 +176,13 @@ Validated:
 - MSP 64 KiB download succeeded as fallback
 - MSC raw 1 MiB transfer succeeded in about 4.3 seconds and produced a valid trimmed `.bbl` prefix
 - MSC raw resume helper validated from 1 MiB to 2 MiB raw bytes with a valid trimmed `.bbl` prefix
+- full 16 MiB MSC raw transfer succeeded as `transferred-logs/full-current-flight.bbl`, trimmed the Blackbox header at raw offset `562176`, produced a `16215040` byte `.bbl`, and was manually validated in Blackbox Explorer
+- production full-size MSC raw transfer with progress display, chunked range reads, resume sidecars, and per-chunk retry policy
 
 Not yet validated:
 
-- full 16 MiB `.bbl` download opened in Blackbox Explorer
 - automatic retry/resume after an interrupted full download
 - deletion of FC logs; v1 intentionally does not delete through FCS
-- production full-size MSC raw transfer with progress and retry policy
 
 ## Known limitations
 
@@ -191,4 +191,11 @@ Not yet validated:
 - LilyGO T-Display-S3-AMOLED-1.64 bring-up required separate FC power; SY6970 OTG configuration succeeded, but the tested USB-C VBUS measurement stayed around 0.6V unloaded.
 - MSP dataflash transfer is slow; use MSC raw transfer where available.
 - `MSC_SCAN` expects FAT files and is not suitable for the validated Betaflight MSC target, which exposes raw Blackbox storage.
-- Raw MSC still starts by downloading from offset zero when no resume state exists; next work should use metadata/scan results to avoid transferring unnecessary leading padding.
+- Raw MSC still starts by downloading from offset zero when no resume state exists. Future optimization can use metadata, scan results, or known storage/log bounds to avoid transferring unnecessary leading/trailing raw padding.
+
+## Future nice-to-have transfer improvements
+
+- Validate automatic retry/resume after an intentionally interrupted full-size transfer and document the exact recovery procedure.
+- Avoid downloading unnecessary leading padding by scanning or caching the Blackbox header offset before full transfer.
+- Avoid downloading unnecessary trailing raw storage when reliable FC-reported log bounds are available.
+- Keep these as optimizations after the validated v1 path; v1 retains complete raw transfer plus host-side trimming because it is simple and faithful.
