@@ -2,6 +2,7 @@ from .bridge_transport import BridgeTransport, BridgeConnectionError, probe_sing
 from .blackbox_transfer import (
     MAX_MSP_V1_DATAFLASH_READ_SIZE,
     MAX_MSP_V2_DATAFLASH_READ_SIZE,
+    erase_dataflash,
     read_dataflash_range,
 )
 from .fc_discovery import (
@@ -19,6 +20,7 @@ from .msp import (
     MspProtocolError,
     MSP_API_VERSION,
     MSP_BLACKBOX_CONFIG,
+    MSP_DATAFLASH_ERASE,
     MSP_DATAFLASH_READ,
     MSP_DATAFLASH_SUMMARY,
     MSP_FC_VARIANT,
@@ -45,6 +47,7 @@ __all__ = [
     "probe_single_client_behavior",
     "MAX_MSP_V1_DATAFLASH_READ_SIZE",
     "MAX_MSP_V2_DATAFLASH_READ_SIZE",
+    "erase_dataflash",
     "read_dataflash_range",
     "BlackboxLogStorageStatus",
     "FcCapabilities",
@@ -60,6 +63,7 @@ __all__ = [
     "MspProtocolError",
     "MSP_API_VERSION",
     "MSP_BLACKBOX_CONFIG",
+    "MSP_DATAFLASH_ERASE",
     "MSP_DATAFLASH_READ",
     "MSP_DATAFLASH_SUMMARY",
     "MSP_FC_VARIANT",

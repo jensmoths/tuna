@@ -1,0 +1,44 @@
+{% extends "layout.html" %}{% block body %}
+<h1>Loop #{{ loop.id }}</h1>
+<div class="card">
+  <p><strong>Status:</strong> {{ loop.status }}</p>
+  <p><strong>Build:</strong> #{{ loop.build_id }} {{ loop.build_name }}</p>
+  <p><strong>Tune Goal:</strong> {{ loop.tune_goal }}</p>
+  {% if loop.operator_notes %}<p><strong>Operator notes:</strong> {{ loop.operator_notes }}</p>{% endif %}
+  <details><summary>FC snapshot</summary><pre>{{ loop.fc_snapshot | tojson(indent=2) }}</pre></details>
+</div>
+
+<h2>Tuning Iterations</h2>
+{% for iteration in iterations %}
+<div class="card">
+  <h3>Tuning Iteration #{{ iteration.id }}</h3>
+  <p>
+    <strong>Status:</strong> {{ iteration.status }}
+    {% if iteration.result %} · <strong>Result:</strong> {{ iteration.result.replace('_', ' ') }}{% endif %}
+  </p>
+  <p class="muted">Created {{ iteration.created_at }}{% if iteration.completed_at %} · completed {{ iteration.completed_at }}{% endif %}</p>
+  {% if iteration.no_change_reason %}<p><strong>No-change reason:</strong> {{ iteration.no_change_reason }}</p>{% endif %}
+  {% if iteration.failure_reason %}<p><strong>Failure reason:</strong> {{ iteration.failure_reason }}</p>{% endif %}
+
+  <h4>Selected Blackbox Logs</h4>
+  <ul>
+  {% for log in iteration.logs %}
+    <li>Blackbox Log #{{ log.id }} — {{ log.parse_status }} — {{ log.role }} — <a href="/logs/{{ log.id }}/analysis">analysis</a></li>
+  {% else %}<li>No Blackbox Logs selected.</li>{% endfor %}
+  </ul>
+
+  {% if iteration.diagnosis %}
+  <h4>Diagnosis</h4>
+  <p class="muted">Confidence: {{ iteration.diagnosis.confidence or 'unspecified' }} · recorded {{ iteration.diagnosis.created_at }}</p>
+  <pre>{{ iteration.diagnosis.body }}</pre>
+  <details><summary>Evidence JSON</summary><pre>{{ iteration.diagnosis.evidence | tojson(indent=2) }}</pre></details>
+  {% else %}<p>No Diagnosis recorded.</p>{% endif %}
+
+  {% if iteration["update"] %}
+  <h4>Tune Update</h4>
+  <p><strong>Status:</strong> {{ iteration["update"].status }}</p>
+  <pre>{{ iteration["update"].settings | tojson(indent=2) }}</pre>
+  {% endif %}
+</div>
+{% else %}<p>No Tuning Iterations recorded for this Loop.</p>{% endfor %}
+{% endblock %}

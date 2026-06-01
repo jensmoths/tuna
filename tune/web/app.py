@@ -43,6 +43,67 @@ def create_app(db_path: str | Path) -> Flask:
         rows = conn.execute("SELECT * FROM operator_tasks ORDER BY status, created_at DESC, id DESC").fetchall()
         return render_template("tasks.html", tasks=rows)
 
+    @app.get("/loops")
+    def loops():
+        conn = db()
+        rows = conn.execute(
+            """
+            SELECT l.*, b.name AS build_name
+            FROM loops l
+            JOIN builds b ON b.id = l.build_id
+            ORDER BY l.status = 'open' DESC, l.created_at DESC, l.id DESC
+            """
+        ).fetchall()
+        return render_template("loops.html", loops=rows)
+
+    @app.get("/loops/<int:loop_id>")
+    def loop_detail(loop_id: int):
+        conn = db()
+        loop = _dict(
+            conn.execute(
+                """
+                SELECT l.*, b.name AS build_name, b.fc_snapshot_json, b.operator_notes
+                FROM loops l
+                JOIN builds b ON b.id = l.build_id
+                WHERE l.id = ?
+                """,
+                (loop_id,),
+            ).fetchone()
+        )
+        if not loop:
+            return "Loop not found", 404
+        loop["fc_snapshot"] = json.loads(loop["fc_snapshot_json"])
+
+        iteration_rows = conn.execute(
+            "SELECT * FROM tuning_iterations WHERE loop_id = ? ORDER BY created_at DESC, id DESC",
+            (loop_id,),
+        ).fetchall()
+        iterations = []
+        for row in iteration_rows:
+            item = _dict(row)
+            diagnosis = _dict(conn.execute("SELECT * FROM diagnoses WHERE iteration_id = ?", (item["id"],)).fetchone())
+            if diagnosis:
+                diagnosis["evidence"] = json.loads(diagnosis["evidence_json"])
+            item["diagnosis"] = diagnosis
+            logs = conn.execute(
+                """
+                SELECT l.id, l.build_id, l.managed_path, l.parse_status, l.imported_at, il.role
+                FROM iteration_logs il
+                JOIN blackbox_logs l ON l.id = il.log_id
+                WHERE il.iteration_id = ?
+                ORDER BY l.id
+                """,
+                (item["id"],),
+            ).fetchall()
+            item["logs"] = logs
+            update = _dict(conn.execute("SELECT * FROM tune_updates WHERE iteration_id = ?", (item["id"],)).fetchone())
+            if update:
+                update["settings"] = json.loads(update["settings_json"])
+            item["update"] = update
+            iterations.append(item)
+
+        return render_template("loop_detail.html", loop=loop, iterations=iterations)
+
     @app.get("/tasks/<int:task_id>")
     def task_detail(task_id: int):
         conn = db()

@@ -10,7 +10,7 @@ from tune.services.analysis import analyze_imported_log, decode_imported_log
 from tune.services.builds import create_build
 from tune.services.diagnoses import record_diagnosis
 from tune.services.fcs_transfer import transfer_blackbox_log_from_bridge
-from tune.services.iterations import create_iteration
+from tune.services.iterations import complete_no_change, create_iteration
 from tune.services.logs import import_blackbox_log
 from tune.services.segment_rows import get_segment_rows
 from tune.services.loops import create_loop
@@ -116,6 +116,10 @@ def main(argv: list[str] | None = None) -> int:
     iteration_current = iteration_sub.add_parser("current")
     iteration_current.add_argument("--loop-id", type=int, required=True)
     _add_json(iteration_current)
+    iteration_no_change = iteration_sub.add_parser("complete-no-change")
+    iteration_no_change.add_argument("--iteration-id", type=int, required=True)
+    iteration_no_change.add_argument("--reason", required=True)
+    _add_json(iteration_no_change)
 
     diagnosis = top.add_parser("diagnosis")
     diagnosis_sub = diagnosis.add_subparsers(dest="action", required=True)
@@ -284,6 +288,10 @@ def main(argv: list[str] | None = None) -> int:
     elif args.area == "iteration" and args.action == "current":
         row = conn.execute("SELECT * FROM tuning_iterations WHERE loop_id = ? AND status = 'open'", (args.loop_id,)).fetchone()
         _print_json(_row_to_dict(row))
+    elif args.area == "iteration" and args.action == "complete-no-change":
+        complete_no_change(conn, args.iteration_id, args.reason)
+        row = conn.execute("SELECT * FROM tuning_iterations WHERE id = ?", (args.iteration_id,)).fetchone()
+        _print_json(_row_to_dict(row) if args.json else {"iteration_id": args.iteration_id})
     elif args.area == "diagnosis" and args.action == "record":
         diagnosis_id = record_diagnosis(conn, args.iteration_id, args.body, confidence=args.confidence, evidence=json.loads(args.evidence_json))
         _emit({"diagnosis_id": diagnosis_id}, args.json)

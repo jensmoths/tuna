@@ -32,7 +32,7 @@ def mark_applied(conn: sqlite3.Connection, update_id: int) -> None:
         (update_id,),
     )
     conn.execute(
-        "UPDATE tuning_iterations SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = ?",
+        "UPDATE tuning_iterations SET status = 'completed', result = 'tune_update_applied', completed_at = CURRENT_TIMESTAMP WHERE id = ?",
         (iteration_id,),
     )
     conn.commit()
@@ -46,7 +46,7 @@ def reject(conn: sqlite3.Connection, update_id: int, reason: str) -> None:
         (reason, update_id),
     )
     conn.execute(
-        "UPDATE tuning_iterations SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = ?",
+        "UPDATE tuning_iterations SET status = 'completed', result = 'tune_update_rejected', completed_at = CURRENT_TIMESTAMP WHERE id = ?",
         (iteration_id,),
     )
     conn.commit()

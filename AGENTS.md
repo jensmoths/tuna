@@ -53,6 +53,6 @@ Use these exact terms in issues, tests, code, plans, and summaries:
 - The local web Operator Console records **Operator Task** responses and approval/rejection decisions; it must not perform FC write-back itself.
 - Approval of a **Tune Update** through the Operator Console means approved for **Tuning Agent** write-back through **FCS**, not already applied.
 - Current tune source of truth in v1 is Tuna's most recently applied recorded **Tune Update**, unless the **Operator** declares an out-of-band change.
-- The **Tuning Agent** owns the decision to discard the FC copy of a transferred log; in v1 the **Operator** performs deletion.
+- After a successful **Post-flight Transfer** has been validated on the **Host Computer**, the **Tuning Agent** should erase the transferred **Blackbox Log** copy from the flight controller through **FCS**. Do not erase the FC copy if transfer validation, host-side retention, or **Import** fails.
 - The **Tuning Agent** performs **Import** of transferred **Blackbox Logs** into Tuna state. Import must attempt metadata extraction from the beginning and retain parse status/warnings.
 

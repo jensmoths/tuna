@@ -52,7 +52,7 @@ Use the project terms exactly:
 - Rejection requires an **Operator** reason.
 - If application fails, record the failure and keep the **Tuning Iteration** incomplete.
 - Retain malformed/truncated/unreadable **Blackbox Logs** as diagnostic artifacts.
-- The **Tuning Agent** may decide a transferred FC copy can be discarded, but in v1 the **Operator** performs deletion.
+- After a successful **Post-flight Transfer** has been validated on the **Host Computer**, the **Tuning Agent** should erase the transferred **Blackbox Log** copy from the FC through **FCS**. Do not erase the FC copy if transfer validation, host-side retention, or **Import** fails.
 
 ## Standard operating procedure
 
@@ -112,6 +112,15 @@ Required success evidence in JSON:
 - `msc_status` includes `msc_raw=1`
 
 After successful transfer, ask the **Operator** to power-cycle/reset the FC back to USB CDC/MSP mode before further FC operations. Current v1 cannot reliably return the FC from MSC to CDC through FCS alone.
+
+After transfer validation and host-side retention/import succeed, erase the transferred **Blackbox Log** copy from the FC through **FCS**. Do not erase FC storage before Tuna has a validated retained copy on the **Host Computer**. The erase command requires the FC to be back in USB CDC/MSP mode:
+
+```bash
+PYTHONPATH=fcs-host python3 fcs-host/fcs_blackbox_erase.py tuna-bridge-usb \
+  --confirm erase-transferred-blackbox-log
+```
+
+Treat erase failure as a follow-up operational issue, not as a reason to discard the retained **Blackbox Log** on the **Host Computer**.
 
 Fallback path: if the ESP32-S3 raw MSC path is unavailable, use the slower read-only MSP dataflash downloader through FCS tooling and then Import the resulting file:
 
@@ -305,4 +314,3 @@ After Import/decode/analyze, look for:
 ```
 
 In a **Diagnosis**, cite chirp evidence by axis and include uncertainty. Low coherence, missing debug fields, short segments, or saturation should lead to requesting better data rather than guessing.
-

@@ -37,6 +37,8 @@ CREATE TABLE IF NOT EXISTS tuning_iterations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   loop_id INTEGER NOT NULL REFERENCES loops(id),
   status TEXT NOT NULL DEFAULT 'open',
+  result TEXT NOT NULL DEFAULT '',
+  no_change_reason TEXT NOT NULL DEFAULT '',
   failure_reason TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   completed_at TEXT

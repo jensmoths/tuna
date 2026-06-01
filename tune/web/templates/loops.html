@@ -1,0 +1,12 @@
+{% extends "layout.html" %}{% block body %}
+<h1>Loops</h1>
+{% for item in loops %}
+<div class="card">
+  <h2>Loop #{{ item.id }} — {{ item.status }}</h2>
+  <p><strong>Build:</strong> #{{ item.build_id }} {{ item.build_name }}</p>
+  <p><strong>Tune Goal:</strong> {{ item.tune_goal }}</p>
+  <p class="muted">Created {{ item.created_at }}{% if item.ended_at %} · ended {{ item.ended_at }}{% endif %}</p>
+  <p><a href="/loops/{{ item.id }}">View Loop history</a></p>
+</div>
+{% else %}<p>No Loops recorded yet.</p>{% endfor %}
+{% endblock %}

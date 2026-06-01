@@ -47,7 +47,7 @@ MSC_GET_RAW [bytes]
 HELP
 ```
 
-`GET` streams a copied `.bbl` from Bridge storage to the Host Computer. The FC copy is not deleted.
+`GET` streams a copied `.bbl` from Bridge storage to the Host Computer. After Tuna validates and retains/imports the transferred **Blackbox Log**, the **Tuning Agent** should erase the transferred FC copy through FCS. Do not erase FC storage before host-side validation succeeds.
 
 `MSC_SCAN` is for FAT-formatted USB MSC devices with visible `.bbl` files. Betaflight mass-storage mode on the validated FC exposes raw Blackbox storage rather than a FAT filesystem, so the validated command for that path is `MSC_GET_RAW [bytes]`.
 

@@ -10,7 +10,7 @@ Host Computer --Wi-Fi/TCP--> ESP32-S3 Bridge --USB CDC/MSP--> Betaflight FC
 Host Computer --Wi-Fi/TCP--> ESP32-S3 Bridge --USB MSC/raw sectors--> Betaflight FC
 ```
 
-This supports read-only **Blackbox Log** discovery and transfer from FC dataflash. The FC copy is not deleted.
+This supports **Blackbox Log** discovery and transfer from FC dataflash. After a validated **Post-flight Transfer** and host-side retention/import, Tuna should erase the transferred FC copy through FCS; deletion must not happen before validation succeeds.
 
 ## Files
 
@@ -18,12 +18,13 @@ This supports read-only **Blackbox Log** discovery and transfer from FC dataflas
 - `fcs_bridge/msp.py` — MSP v1/v2 frame helpers and Betaflight dataflash parsers
 - `fcs_bridge/msp_client.py` — reusable synchronous MSP client
 - `fcs_bridge/fc_discovery.py` — FC identity and Blackbox storage discovery
-- `fcs_bridge/blackbox_transfer.py` — read-only MSP dataflash byte-range transfer
+- `fcs_bridge/blackbox_transfer.py` — MSP dataflash byte-range transfer and erase helpers
 - `fcs_connectivity_tracer.py` — CLI smoke tracer against a real Bridge
 - `fc_passthrough_smoke.py` — MSP passthrough smoke test against a real FC
 - `fcs_blackbox_storage_probe.py` — read-only Blackbox storage discovery
 - `fcs_blackbox_read_probe.py` — small diagnostic byte-range read
 - `fcs_blackbox_download.py` — full FC-reported used dataflash download to `.bbl`
+- `fcs_blackbox_erase.py` — erase transferred FC Blackbox Log storage after validated host-side transfer/import
 - `fcs_msc_raw_download.py` — raw Betaflight USB MSC transfer helper; trims leading padding before the Blackbox header
 - `tests/test_bridge_transport.py` — stdlib `unittest` contract tests using a local single-client fake Bridge
 
@@ -82,13 +83,24 @@ PYTHONPATH=fcs-host python3 fcs-host/fcs_blackbox_read_probe.py tuna-bridge --si
 
 ## Download a complete Blackbox Log dataflash image
 
-This transfers FC-reported used dataflash bytes over MSP into a `.bbl` file on the **Host Computer**. The FC copy is not deleted. This path is useful as a fallback and diagnostic path, but it is much slower than USB MSC.
+This transfers FC-reported used dataflash bytes over MSP into a `.bbl` file on the **Host Computer**. After validation and retention/import succeed, Tuna should erase the transferred FC copy through FCS. This path is useful as a fallback and diagnostic path, but it is much slower than USB MSC.
 
 ```bash
 PYTHONPATH=fcs-host python3 fcs-host/fcs_blackbox_download.py tuna-bridge
 ```
 
 The completed file is written under `transferred-logs/` and should be openable in Blackbox Explorer.
+
+## Erase transferred FC Blackbox Log storage
+
+Only erase after Tuna has a validated retained **Blackbox Log** on the **Host Computer** and **Import** succeeded. The FC must be in USB CDC/MSP mode, so after MSC raw transfer the **Operator** must power-cycle/reset the FC before this command can run.
+
+```bash
+PYTHONPATH=fcs-host python3 fcs-host/fcs_blackbox_erase.py tuna-bridge-usb \
+  --confirm erase-transferred-blackbox-log
+```
+
+The confirmation string is intentionally explicit because this erases FC Blackbox storage.
 
 Current downloader defaults:
 
@@ -182,7 +194,7 @@ Validated:
 Not yet validated:
 
 - automatic retry/resume after an interrupted full download
-- deletion of FC logs; v1 intentionally does not delete through FCS
+- erasing transferred FC logs through FCS after successful validated host-side transfer/import
 
 ## Known limitations
 

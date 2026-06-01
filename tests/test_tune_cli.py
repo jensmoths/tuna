@@ -67,6 +67,26 @@ class TuneCliTests(unittest.TestCase):
         self.assertEqual(status["logs"], 1)
         self.assertEqual(status["iterations_open"], 0)
 
+    def test_iteration_complete_no_change_cli(self):
+        self.run_cli_json("db", "init")
+        build = self.run_cli_json("build", "create", "5 inch")
+        loop = self.run_cli_json("loop", "create", "--build-id", str(build["build_id"]), "--tune-goal", "baseline")
+        iteration = self.run_cli_json("iteration", "create", "--loop-id", str(loop["loop_id"]))
+        self.run_cli_json("diagnosis", "record", "--iteration-id", str(iteration["iteration_id"]), "--body", "No safe change")
+
+        completed = self.run_cli_json(
+            "iteration",
+            "complete-no-change",
+            "--iteration-id",
+            str(iteration["iteration_id"]),
+            "--reason",
+            "No safe Tune Update from this Blackbox Log alone",
+        )
+
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(completed["result"], "no_change")
+        self.assertIn("Blackbox Log", completed["no_change_reason"])
+
     def test_log_transfer_command_delegates_to_fcs_transfer_with_validation(self):
         output = self.root / "flight.bbl"
         payload = {

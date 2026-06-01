@@ -8,7 +8,7 @@ from pathlib import Path
 from tune.blackbox import parse_blackbox_metadata
 from tune.services.builds import create_build
 from tune.services.diagnoses import record_diagnosis
-from tune.services.iterations import create_iteration
+from tune.services.iterations import complete_no_change, create_iteration
 from tune.services.logs import import_blackbox_log
 from tune.services.loops import create_loop
 from tune.services.tune_updates import mark_applied, propose_tune_update, reject
@@ -86,6 +86,27 @@ class TuneWorkflowTests(unittest.TestCase):
         row = self.conn.execute("SELECT status, rejection_reason FROM tune_updates WHERE id = ?", (update_id,)).fetchone()
         self.assertEqual(row["status"], "rejected")
         self.assertIn("confirmation", row["rejection_reason"])
+
+    def test_complete_iteration_with_no_change_requires_diagnosis_and_reason(self):
+        build_id = create_build(self.conn, "5 inch")
+        loop_id = create_loop(self.conn, build_id, "baseline")
+        iteration_id = create_iteration(self.conn, loop_id)
+
+        with self.assertRaises(ValueError):
+            complete_no_change(self.conn, iteration_id, "")
+        with self.assertRaises(ValueError):
+            complete_no_change(self.conn, iteration_id, "No safe Tune Update")
+
+        record_diagnosis(self.conn, iteration_id, "Baseline reviewed; no change", confidence="low")
+        complete_no_change(self.conn, iteration_id, "No safe Tune Update from this Blackbox Log alone")
+
+        row = self.conn.execute("SELECT status, result, no_change_reason FROM tuning_iterations WHERE id = ?", (iteration_id,)).fetchone()
+        self.assertEqual(row["status"], "completed")
+        self.assertEqual(row["result"], "no_change")
+        self.assertIn("Blackbox Log", row["no_change_reason"])
+
+        next_iteration_id = create_iteration(self.conn, loop_id)
+        self.assertNotEqual(next_iteration_id, iteration_id)
 
 
 if __name__ == "__main__":

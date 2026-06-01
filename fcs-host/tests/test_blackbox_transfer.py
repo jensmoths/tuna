@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from fcs_bridge import MSP_DATAFLASH_READ, MspClient, build_msp_v2_request, read_dataflash_range
+from fcs_bridge import MSP_DATAFLASH_ERASE, MSP_DATAFLASH_READ, MspClient, build_msp_v2_request, erase_dataflash, read_dataflash_range
 
 
 def _response(command: int, payload: bytes = b"") -> bytes:
@@ -83,6 +83,14 @@ class BlackboxTransferTests(unittest.TestCase):
             read_dataflash_range(
                 MspClient(transport), address=0, size=3, timeout_seconds=0.1
             )
+
+    def test_erase_dataflash_sends_msp_erase_command(self):
+        transport = _FakeTransport([_response(MSP_DATAFLASH_ERASE)])
+
+        erase_dataflash(MspClient(transport), timeout_seconds=0.1)
+
+        self.assertEqual(len(transport.sent), 1)
+        self.assertIn(bytes([MSP_DATAFLASH_ERASE]), transport.sent[0])
 
 
 if __name__ == "__main__":

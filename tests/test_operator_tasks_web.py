@@ -11,7 +11,7 @@ from pathlib import Path
 
 from tune.services.builds import create_build
 from tune.services.diagnoses import record_diagnosis
-from tune.services.iterations import create_iteration
+from tune.services.iterations import complete_no_change, create_iteration
 from tune.services.loops import create_loop
 from tune.services.operator_tasks import create_task
 from tune.services.tune_updates import propose_tune_update
@@ -71,6 +71,27 @@ class OperatorWebTests(unittest.TestCase):
         self.assertIn(b"Quality", detail.data)
         self.assertIn(b"Tracking", detail.data)
         self.assertIn(b"Segments", detail.data)
+
+    def test_loop_pages_show_iteration_diagnosis_and_no_change_result(self):
+        build_id = create_build(self.conn, "5 inch", fc_snapshot={"fc_variant": "BTFL"}, operator_notes="Operator-confirmed Build")
+        loop_id = create_loop(self.conn, build_id, "baseline")
+        from tune.services.logs import import_blackbox_log
+        imported_log_id = import_blackbox_log(self.conn, "reference-logs/btfl_001.bbl", build_id=build_id, storage_dir=self.root / "logs")
+        iteration_id = create_iteration(self.conn, loop_id, [imported_log_id])
+        record_diagnosis(self.conn, iteration_id, "No safe Tune Update yet", confidence="low", evidence={"log_ids": [imported_log_id]})
+        complete_no_change(self.conn, iteration_id, "Need a better follow-up Blackbox Log")
+
+        client = create_app(self.db_path).test_client()
+        page = client.get("/loops")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Loop #", page.data)
+        self.assertIn(b"baseline", page.data)
+        detail = client.get(f"/loops/{loop_id}")
+        self.assertEqual(detail.status_code, 200)
+        self.assertIn(b"Tuning Iteration", detail.data)
+        self.assertIn(b"no change", detail.data)
+        self.assertIn(b"No safe Tune Update yet", detail.data)
+        self.assertIn(b"Need a better follow-up Blackbox Log", detail.data)
 
 
 if __name__ == "__main__":
