@@ -139,6 +139,10 @@ tune --db tune.sqlite3 log analyze --log-id 1 --json
 
 If `blackbox_decode` is not installed, report that dependency clearly and fall back to available import metadata only.
 
+Chirp diagnostic **Blackbox Logs** are supported as analysis evidence when the decoded CSV contains `debug[0..3]`, `setpoint[0..2]`, and `gyroADC[0..2]`. In analysis JSON, inspect `chirp_analysis` for per-axis chirp segments and frequency-response metrics such as coherence, bandwidth, gain crossover, phase margin, and resonant peak. Treat `chirp_analysis.available=false` and its warnings as evidence that the log was not captured with usable chirp data.
+
+Use chirp as an optional diagnostic capture, not a normal replacement for all flight analysis. Request a chirp capture when normal **Blackbox Logs** do not provide enough control-loop evidence.
+
 ### 5. Start a Tuning Iteration
 
 Choose imported **Blackbox Logs** for the **Tuning Iteration**. You may defer logs or reuse prior logs as reference input.
@@ -245,6 +249,7 @@ Examples include requesting fields or modes needed for:
 - gyro and unfiltered gyro comparison
 - D-term noise analysis
 - RPM/filter analysis
+- chirp frequency-response analysis (`debug_mode = CHIRP`, high-resolution Blackbox logging, and a firmware build with CHIRP support)
 - debug modes relevant to filters, RPM, or scheduler behavior
 - logging rate or denominator changes
 
@@ -259,4 +264,45 @@ Rules:
 - If the requested Blackbox setting could affect performance, storage use, or flight behavior, call that out explicitly in the **Operator Task**.
 
 When analysis is limited by missing fields, say so in the **Diagnosis** or next-step recommendation instead of guessing.
+
+## Chirp diagnostic workflow
+
+Chirp is an active setpoint excitation used to estimate control-loop frequency response. It complements normal maneuver analysis and is flight-safety relevant.
+
+Rules:
+
+- Do not trigger chirp automatically from Tuna.
+- Do not treat chirp-derived metrics as an automatic **Tune Update**.
+- Ask the **Operator** before requesting chirp setup or capture.
+- The **Pilot** flies the chirp maneuver in open space and remains responsible for safe flight.
+- Use chirp results as evidence in a **Diagnosis**; any resulting **Tune Update** still requires **Operator** review.
+
+Expected setup for a useful chirp **Blackbox Log**:
+
+- Betaflight firmware built with CHIRP support.
+- `debug_mode = CHIRP`.
+- High-resolution Blackbox logging enabled when available.
+- `CHIRP` assigned to an AUX switch.
+- Full chirp captures for roll, pitch, and yaw; toggling the switch cycles axes.
+- Avoid motor saturation during chirp.
+
+After Import/decode/analyze, look for:
+
+```json
+{
+  "chirp_analysis": {
+    "available": true,
+    "axes": {
+      "roll": {
+        "mean_coherence_5_100hz": 0.9,
+        "bandwidth_hz": 45.0,
+        "phase_margin_deg": 55.0,
+        "resonant_peak_db": 2.0
+      }
+    }
+  }
+}
+```
+
+In a **Diagnosis**, cite chirp evidence by axis and include uncertainty. Low coherence, missing debug fields, short segments, or saturation should lead to requesting better data rather than guessing.
 

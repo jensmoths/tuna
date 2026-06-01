@@ -6,6 +6,7 @@ from typing import Any
 
 
 from .capabilities import summarize_analysis_capabilities as _analysis_capabilities
+from .chirp import summarize_chirp_analysis as _summarize_chirp_analysis
 from .common import (
     ACTIVE_MOTOR_THRESHOLD,
     ACTIVE_THROTTLE_THRESHOLD,
@@ -37,6 +38,60 @@ from .spectrum import (
 )
 from .step_response import summarize_step_response as _summarize_step_response
 from .timing import summarize_timing as _summarize_timing
+
+
+def _parse_header_value(value: str) -> Any:
+    text = value.strip().strip('"')
+    if "," in text:
+        parts = [part.strip() for part in text.split(",")]
+        parsed = [_parse_header_value(part) for part in parts if part != ""]
+        return parsed
+    numeric = _to_float(text)
+    if numeric is None:
+        return text
+    if numeric.is_integer():
+        return int(numeric)
+    return numeric
+
+
+def _looks_like_data_header(row: list[str]) -> bool:
+    normalized = [_normalize_field(value) for value in row]
+    return "time" in normalized and any(value.startswith("gyroADC[") for value in normalized)
+
+
+def _iter_csv_data(handle) -> tuple[dict[str, Any], list[str], Any]:
+    """Return Blackbox header settings, normalized data fields, and data rows.
+
+    Plain CSV files used in tests start directly with the data header. Decoded
+    Blackbox CSVs may contain quoted header setting lines before the actual data
+    header. This helper keeps both forms working.
+    """
+    reader = csv.reader(handle)
+    settings: dict[str, Any] = {}
+    raw_fields: list[str] | None = None
+    for row in reader:
+        if not row:
+            continue
+        if _looks_like_data_header(row):
+            raw_fields = row
+            break
+        if len(row) >= 2:
+            key = _normalize_field(row[0]).strip('"')
+            if key:
+                settings[key] = _parse_header_value(",".join(row[1:]))
+    if raw_fields is None:
+        return settings, [], iter(())
+    fields = [_normalize_field(name) for name in raw_fields]
+
+    def rows():
+        for values in reader:
+            if not values:
+                continue
+            if len(values) < len(fields):
+                values = values + [""] * (len(fields) - len(values))
+            yield dict(zip(fields, values))
+
+    return settings, fields, rows()
 
 
 def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[str, Any]:
@@ -71,11 +126,11 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
     motor_values: dict[str, list[float]] = {}
     motor_throttle_bins: dict[str, dict[str, list[float]]] = {}
     pid_samples = {axis: [] for axis in AXES.values()}
+    chirp_rows: list[dict[str, float | int]] = []
+    blackbox_settings: dict[str, Any] = {}
 
     with csv_path.open(newline="", errors="replace") as handle:
-        reader = csv.DictReader(handle)
-        raw_fields = reader.fieldnames or []
-        fields = [_normalize_field(name) for name in raw_fields]
+        blackbox_settings, fields, reader = _iter_csv_data(handle)
         for raw_row in reader:
             row_count += 1
             if max_rows is not None and row_count > max_rows:
@@ -83,7 +138,7 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
                 row_count -= 1
                 break
 
-            row = {_normalize_field(name): value for name, value in raw_row.items()}
+            row = raw_row
             time_value = _to_float(row.get("time", ""))
             if time_value is not None:
                 first_time = time_value if first_time is None else first_time
@@ -259,6 +314,22 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
                             builder["motor_saturation_samples"] += 1
                         high_rate_builders[axis] = builder
 
+                if time_value is not None:
+                    chirp_row: dict[str, float | int] = {"_row": row_count, "time": time_value}
+                    has_chirp_values = True
+                    for field in (
+                        "debug[0]", "debug[1]", "debug[2]", "debug[3]",
+                        "setpoint[0]", "setpoint[1]", "setpoint[2]",
+                        "gyroADC[0]", "gyroADC[1]", "gyroADC[2]",
+                    ):
+                        value = numeric.get(field)
+                        if value is None:
+                            has_chirp_values = False
+                            break
+                        chirp_row[field] = value
+                    if has_chirp_values:
+                        chirp_rows.append(chirp_row)
+
                 throttle_active = throttle is not None and throttle >= THROTTLE_PUNCH_THRESHOLD
                 if throttle_active:
                     if throttle_builder is None or time_value - throttle_builder["last_time_us"] > SEGMENT_GAP_US:
@@ -403,6 +474,13 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
     motor_analysis = _summarize_motor_analysis(motor_values, motor_throttle_bins)
     pid_term_analysis = _summarize_pid_term_analysis(pid_samples, step_response)
     capabilities = _analysis_capabilities(fields, timing)
+    chirp_analysis = _summarize_chirp_analysis(
+        chirp_rows,
+        fields,
+        timing["nominal_logging_rate_hz"],
+        str(csv_path),
+        blackbox_settings,
+    )
 
     active_window = None
     if armed_segments:
@@ -471,6 +549,7 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
         "row_count": row_count,
         "fields": fields,
         "field_count": len(fields),
+        "blackbox_settings": blackbox_settings,
         "duration_seconds": duration_seconds,
         "ranges": ranges,
         "quality": {
@@ -506,6 +585,7 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
         "step_response": step_response,
         "motor_analysis": motor_analysis,
         "pid_term_analysis": pid_term_analysis,
+        "chirp_analysis": chirp_analysis,
         "segments": {
             "high_rate": high_rate_segments,
             "throttle_punch": throttle_segments,

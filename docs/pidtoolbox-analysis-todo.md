@@ -181,6 +181,14 @@ PIDtoolbox is known for spectral analysis and frequency-vs-throttle views. Tuna 
 - Implemented: first-pass PID term, D-term spike, I-term windup, feedforward, and P/D balance summaries.
 - Not implemented yet: dynamic notch/RPM filter effectiveness summaries.
 
+## Implemented chirp analysis MVP
+
+- Added decoded-CSV Blackbox header setting extraction for analysis inputs that include header setting rows before the data header.
+- Added `chirp_analysis` JSON for logs containing `debug[0..3]`, `setpoint[0..2]`, and `gyroADC[0..2]`.
+- Chirp analysis segments active chirps by `debug[1]` axis marker (`0=roll`, `1=pitch`, `2=yaw`, `-1=inactive`).
+- Per usable chirp segment, Tuna estimates a Welch setpoint-to-gyro transfer function summary with coherence, bandwidth, gain crossover, phase margin, and resonant peak metrics.
+- Chirp analysis is evidence-only: it does not create **Tune Updates** automatically.
+
 ## TODO: Blackbox logging configuration support
 
 - Implemented first pass: analysis warnings name missing Blackbox fields or debug modes needed for a stronger **Diagnosis**.
