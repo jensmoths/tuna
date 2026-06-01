@@ -5,10 +5,15 @@ import math
 
 from tests.analysis_helpers import AnalysisTestCase
 from tune.analysis.csv_summary import analyze_csv_log
+from tune.services.analysis import analyze_imported_log
+from tune.services.builds import create_build
+from tune.services.logs import import_blackbox_log
+from tune.services.segment_rows import get_segment_rows
+from tune.storage import connect, init_db
 
 
 class ChirpAnalysisTests(AnalysisTestCase):
-    def test_analyze_csv_log_summarizes_chirp_segments_and_response(self):
+    def write_chirp_csv(self) -> Path:
         path = self.root / "chirp.csv"
         sample_rate_hz = 1000
         fieldnames = [
@@ -42,16 +47,23 @@ class ChirpAnalysisTests(AnalysisTestCase):
                     "debug[3]": 1000 * signal,
                     "motor[0]": 1500,
                 })
+        return path
+
+    def test_analyze_csv_log_summarizes_chirp_segments_and_response(self):
+        path = self.write_chirp_csv()
 
         summary = analyze_csv_log(path)
 
         chirp = summary["chirp_analysis"]
         self.assertTrue(chirp["available"])
+        self.assertEqual(chirp["confidence"], "medium")
         self.assertEqual(chirp["debug_mode"], 97)
         self.assertEqual(chirp["settings"]["chirp_time_seconds"], 2)
         self.assertEqual(len(chirp["segments"]), 1)
+        self.assertEqual(len(summary["segments"]["chirp"]), 1)
         self.assertEqual(chirp["segments"][0]["axis"], "roll")
         self.assertTrue(chirp["segments"][0]["usable"])
+        self.assertIn("Missing usable chirp axes", "\n".join(chirp["warnings"]))
         self.assertGreater(chirp["axes"]["roll"]["mean_coherence_5_100hz"], 0.9)
         self.assertEqual(chirp["segments"][0]["raw_data_ref"]["start_row"], 101)
 
@@ -61,6 +73,20 @@ class ChirpAnalysisTests(AnalysisTestCase):
         self.assertFalse(chirp["available"])
         self.assertEqual(chirp["reason"], "missing_fields")
         self.assertIn("Missing CHIRP debug fields", chirp["warnings"][0])
+
+    def test_service_returns_chirp_segment_rows_from_latest_analysis(self):
+        conn = connect(self.root / "tune.sqlite3")
+        init_db(conn)
+        build_id = create_build(conn, "5 inch")
+        log_id = import_blackbox_log(conn, "reference-logs/btfl_001.bbl", build_id=build_id, storage_dir=self.root / "logs")
+        analyze_imported_log(conn, log_id, csv_path=self.write_chirp_csv())
+
+        payload = get_segment_rows(conn, log_id=log_id, segment_kind="chirp", segment_index=0, fields=["time", "setpoint[0]", "gyroADC[0]", "debug[1]"], max_rows=5)
+
+        self.assertEqual(payload["segment_kind"], "chirp")
+        self.assertEqual(payload["segment"]["axis"], "roll")
+        self.assertEqual(payload["fields"], ["time", "setpoint[0]", "gyroADC[0]", "debug[1]"])
+        self.assertEqual(len(payload["rows"]), 5)
 
 
 if __name__ == "__main__":

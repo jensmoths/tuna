@@ -7,6 +7,26 @@ from typing import Any
 from .common import normalize_field as _normalize_field
 
 
+def _looks_like_data_header(row: list[str]) -> bool:
+    normalized = [_normalize_field(value) for value in row]
+    return "time" in normalized and any(value.startswith("gyroADC[") for value in normalized)
+
+
+def _iter_data_rows(handle):
+    reader = csv.reader(handle)
+    raw_fields = None
+    for row in reader:
+        if not row:
+            continue
+        if _looks_like_data_header(row):
+            raw_fields = row
+            break
+    if raw_fields is None:
+        return [], []
+    normalized_fields = [_normalize_field(field) for field in raw_fields]
+    return normalized_fields, reader
+
+
 def read_segment_rows(
     csv_path: str | Path,
     *,
@@ -27,19 +47,18 @@ def read_segment_rows(
     last = end_row + pad_rows
     selected_fields = [_normalize_field(field) for field in fields] if fields else None
     rows: list[dict[str, str]] = []
-    raw_fields: list[str] = []
     normalized_fields: list[str] = []
 
     with Path(csv_path).open(newline="", errors="replace") as handle:
-        reader = csv.DictReader(handle)
-        raw_fields = reader.fieldnames or []
-        normalized_fields = [_normalize_field(field) for field in raw_fields]
-        for row_number, raw_row in enumerate(reader, start=1):
+        normalized_fields, reader = _iter_data_rows(handle)
+        for row_number, values in enumerate(reader, start=1):
             if row_number < first:
                 continue
             if row_number > last or len(rows) >= max_rows:
                 break
-            normalized_row = {_normalize_field(name): value.strip() for name, value in raw_row.items()}
+            if len(values) < len(normalized_fields):
+                values = values + [""] * (len(normalized_fields) - len(values))
+            normalized_row = {name: value.strip() for name, value in zip(normalized_fields, values)}
             if selected_fields is not None:
                 normalized_row = {name: normalized_row.get(name, "") for name in selected_fields}
             normalized_row["_row"] = str(row_number)

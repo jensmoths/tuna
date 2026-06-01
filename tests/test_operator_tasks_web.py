@@ -13,7 +13,7 @@ from tune.services.builds import create_build
 from tune.services.diagnoses import record_diagnosis
 from tune.services.iterations import complete_no_change, create_iteration
 from tune.services.loops import create_loop
-from tune.services.operator_tasks import create_task
+from tune.services.operator_tasks import create_chirp_capture_task, create_task
 from tune.services.tune_updates import propose_tune_update
 from tune.storage import connect, init_db
 from tune.services.analysis import analyze_imported_log
@@ -71,6 +71,20 @@ class OperatorWebTests(unittest.TestCase):
         self.assertIn(b"Quality", detail.data)
         self.assertIn(b"Tracking", detail.data)
         self.assertIn(b"Segments", detail.data)
+        self.assertIn(b"Chirp analysis", detail.data)
+
+    def test_chirp_capture_task_shows_checklist_and_resolves(self):
+        task_id = create_chirp_capture_task(self.conn, build_id=1, loop_id=2, reason="Need cleaner roll/pitch/yaw response evidence")
+        client = create_app(self.db_path).test_client()
+        page = client.get(f"/tasks/{task_id}")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Chirp capture checklist", page.data)
+        self.assertIn(b"debug_mode = CHIRP", page.data)
+        response = client.post(f"/tasks/{task_id}/resolve-chirp-capture", data={"captured": "yes", "notes": "Captured LOG001"})
+        self.assertEqual(response.status_code, 302)
+        task = self.conn.execute("SELECT status, response_json FROM operator_tasks WHERE id = ?", (task_id,)).fetchone()
+        self.assertEqual(task["status"], "resolved")
+        self.assertIn("captured", task["response_json"])
 
     def test_loop_pages_show_iteration_diagnosis_and_no_change_result(self):
         build_id = create_build(self.conn, "5 inch", fc_snapshot={"fc_variant": "BTFL"}, operator_notes="Operator-confirmed Build")

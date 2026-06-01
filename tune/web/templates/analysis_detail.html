@@ -26,7 +26,14 @@
 <h2>Filter analysis</h2><pre>{{ item.analysis.filter_analysis | tojson(indent=2) }}</pre>
 <h2>Noise peaks</h2><pre>{{ item.analysis.noise_peaks | tojson(indent=2) }}</pre>
 <h2>RPM analysis</h2><pre>{{ item.analysis.rpm_analysis | tojson(indent=2) }}</pre>
-<h2>Chirp analysis</h2><pre>{{ item.analysis.chirp_analysis | tojson(indent=2) }}</pre>
+<h2>Chirp analysis</h2>
+{% set chirp = item.analysis.chirp_analysis %}
+<div class="card"><p><strong>Available:</strong> {{ chirp.available }} · <strong>Confidence:</strong> {{ chirp.confidence or 'none' }}</p><ul>{% for warning in chirp.warnings %}<li>{{ warning }}</li>{% else %}<li>No chirp warnings.</li>{% endfor %}</ul></div>
+<table><tr><th>Axis</th><th>Usable segments</th><th>Mean coherence</th><th>Bandwidth</th><th>Phase margin</th><th>Resonant peak</th></tr>
+{% for axis, data in chirp.axes.items() %}<tr><td>{{ axis }}</td><td>{{ data.usable_segments }}</td><td>{{ "%.2f"|format(data.mean_coherence_5_100hz or 0) }}</td><td>{{ "%.1f"|format(data.bandwidth_hz or 0) }} Hz</td><td>{{ "%.1f"|format(data.phase_margin_deg or 0) }}°</td><td>{{ "%.1f"|format(data.resonant_peak_db or 0) }} dB</td></tr>{% else %}<tr><td colspan="6">No usable chirp axes found.</td></tr>{% endfor %}</table>
+<h3>Chirp segments</h3><table><tr><th>Axis</th><th>Start</th><th>Duration</th><th>Usable</th><th>Coherence</th><th>Motor sat</th><th>Rows</th></tr>
+{% for segment in item.analysis.segments.chirp %}<tr><td>{{ segment.axis }}</td><td>{{ "%.2f"|format(segment.start_time_seconds) }}s</td><td>{{ "%.2f"|format(segment.duration_seconds) }}s</td><td>{{ segment.usable }}</td><td>{{ "%.2f"|format(segment.frequency_response.mean_coherence_5_100hz if segment.frequency_response is defined else 0) }}</td><td>{{ segment.motor_saturation_samples }}</td><td>{{ segment.raw_data_ref.start_row }}-{{ segment.raw_data_ref.end_row }}</td></tr>{% else %}<tr><td colspan="7">No chirp segments found.</td></tr>{% endfor %}</table>
+<pre>{{ chirp | tojson(indent=2) }}</pre>
 <h2>Step response</h2><pre>{{ item.analysis.step_response | tojson(indent=2) }}</pre>
 <h2>Motor analysis</h2><pre>{{ item.analysis.motor_analysis | tojson(indent=2) }}</pre>
 <h2>PID term analysis</h2><pre>{{ item.analysis.pid_term_analysis | tojson(indent=2) }}</pre>

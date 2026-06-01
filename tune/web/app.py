@@ -149,6 +149,21 @@ def create_app(db_path: str | Path) -> Flask:
         resolve_task(conn, task_id, {"decision": "rejected", "reason": reason, "tune_update_id": update_id})
         return redirect(url_for("tasks"))
 
+    @app.post("/tasks/<int:task_id>/resolve-chirp-capture")
+    def resolve_chirp_capture(task_id: int):
+        conn = db()
+        task = conn.execute("SELECT * FROM operator_tasks WHERE id = ?", (task_id,)).fetchone()
+        if not task:
+            return "Task not found", 404
+        if task["kind"] != "request_chirp_capture":
+            return "Task is not a chirp capture request", 400
+        captured = request.form.get("captured") == "yes"
+        notes = request.form.get("notes", "").strip()
+        if not captured and not notes:
+            return "Notes are required if chirp capture was not completed", 400
+        resolve_task(conn, task_id, {"decision": "captured" if captured else "not_captured", "notes": notes})
+        return redirect(url_for("tasks"))
+
     @app.get("/logs")
     def logs():
         conn = db()

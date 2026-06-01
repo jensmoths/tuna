@@ -316,6 +316,7 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
 
                 if time_value is not None:
                     chirp_row: dict[str, float | int] = {"_row": row_count, "time": time_value}
+                    chirp_row["motor_saturated"] = int(saturated_this_row)
                     has_chirp_values = True
                     for field in (
                         "debug[0]", "debug[1]", "debug[2]", "debug[3]",
@@ -589,6 +590,7 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
         "segments": {
             "high_rate": high_rate_segments,
             "throttle_punch": throttle_segments,
+            "chirp": chirp_analysis.get("segments", []),
         },
         "warnings": warnings,
     }

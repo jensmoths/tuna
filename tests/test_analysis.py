@@ -33,6 +33,7 @@ class AnalysisTests(AnalysisTestCase):
         self.assertEqual(summary["timing"]["gap_count"], 0)
         self.assertIn("high_rate", summary["segments"])
         self.assertIn("throttle_punch", summary["segments"])
+        self.assertIn("chirp", summary["segments"])
         self.assertIn("analysis_capabilities", summary)
 
     def test_read_segment_rows_returns_selected_window(self):

@@ -14,7 +14,7 @@ from tune.services.iterations import complete_no_change, create_iteration
 from tune.services.logs import import_blackbox_log
 from tune.services.segment_rows import get_segment_rows
 from tune.services.loops import create_loop
-from tune.services.operator_tasks import create_task
+from tune.services.operator_tasks import create_chirp_capture_task, create_task
 from tune.services.tune_updates import approve_for_write, mark_applied, propose_tune_update, reject, record_application_failure
 from tune.storage import connect, init_db
 
@@ -97,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     _add_json(log_analyze)
     segment_rows = log_sub.add_parser("segment-rows")
     segment_rows.add_argument("--log-id", type=int, required=True)
-    segment_rows.add_argument("--segment-kind", required=True, choices=["high_rate", "throttle_punch"])
+    segment_rows.add_argument("--segment-kind", required=True, choices=["high_rate", "throttle_punch", "chirp"])
     segment_rows.add_argument("--segment-index", type=int, required=True)
     segment_rows.add_argument("--fields", help="comma-separated decoded CSV fields to return")
     segment_rows.add_argument("--pad-rows", type=int, default=0)
@@ -163,6 +163,11 @@ def main(argv: list[str] | None = None) -> int:
     task_create.add_argument("--body", default="")
     task_create.add_argument("--payload-json", default="{}")
     _add_json(task_create)
+    task_chirp = task_sub.add_parser("request-chirp-capture")
+    task_chirp.add_argument("--build-id", type=int)
+    task_chirp.add_argument("--loop-id", type=int)
+    task_chirp.add_argument("--reason", default="Normal Blackbox Logs do not provide enough control-loop frequency-response evidence.")
+    _add_json(task_chirp)
     _add_json(task_sub.add_parser("list"))
 
     web = top.add_parser("web")
@@ -337,6 +342,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.area == "task" and args.action == "create":
         task_id = create_task(conn, args.kind, args.title, body=args.body, payload=json.loads(args.payload_json))
         _emit({"task_id": task_id}, args.json)
+    elif args.area == "task" and args.action == "request-chirp-capture":
+        task_id = create_chirp_capture_task(conn, build_id=args.build_id, loop_id=args.loop_id, reason=args.reason)
+        _emit({"task_id": task_id, "kind": "request_chirp_capture"}, args.json)
     elif args.area == "task" and args.action == "list":
         _print_json([_row_to_dict(row) for row in conn.execute("SELECT * FROM operator_tasks ORDER BY status, created_at DESC, id DESC")])
     elif args.area == "web":

@@ -9,6 +9,7 @@ from .common import AXES
 MIN_CHIRP_SEGMENT_SECONDS = 1.0
 MIN_CHIRP_SAMPLES = 32
 COHERENCE_THRESHOLD = 0.3
+GOOD_MEAN_COHERENCE = 0.7
 
 
 def summarize_chirp_analysis(
@@ -74,6 +75,7 @@ def summarize_chirp_analysis(
         }
 
     axes: dict[str, Any] = {}
+    analysis_warnings: list[str] = []
     for segment in segments:
         axis_name = segment["axis"]
         axis_index = segment["axis_index"]
@@ -81,6 +83,7 @@ def summarize_chirp_analysis(
         if len(rows) < MIN_CHIRP_SAMPLES or segment["duration_seconds"] < MIN_CHIRP_SEGMENT_SECONDS:
             segment["usable"] = False
             segment["warning"] = "segment_too_short"
+            analysis_warnings.append(f"{axis_name} chirp segment at {segment['start_time_seconds']:.2f}s is too short")
             continue
         setpoint = np.asarray([row[f"setpoint[{axis_index}]"] for row in rows], dtype=float)
         gyro = np.asarray([row[f"gyroADC[{axis_index}]"] for row in rows], dtype=float)
@@ -91,10 +94,16 @@ def summarize_chirp_analysis(
             segment["warning"] = str(exc)
             continue
         metrics = _transfer_metrics(tf)
+        motor_saturation_samples = sum(1 for row in rows if row.get("motor_saturated"))
         segment.update({
             "usable": True,
+            "motor_saturation_samples": motor_saturation_samples,
             "frequency_response": metrics,
         })
+        if motor_saturation_samples:
+            analysis_warnings.append(f"{axis_name} chirp segment at {segment['start_time_seconds']:.2f}s has motor saturation samples")
+        if (metrics.get("mean_coherence_5_100hz") or 0.0) < GOOD_MEAN_COHERENCE:
+            analysis_warnings.append(f"{axis_name} chirp segment at {segment['start_time_seconds']:.2f}s has low mean coherence")
         axis_summary = axes.setdefault(axis_name, {"segments": 0, "usable_segments": 0, "mean_coherence_5_100hz": None, "bandwidth_hz": None, "resonant_peak_db": None, "phase_margin_deg": None})
         axis_summary["segments"] += 1
         axis_summary["usable_segments"] += 1
@@ -110,10 +119,18 @@ def summarize_chirp_analysis(
     usable_count = sum(1 for segment in segments if segment.get("usable"))
     if usable_count == 0:
         warnings.append("No chirp segment was long enough for frequency-response analysis")
+    present_axes = {segment["axis"] for segment in segments if segment.get("usable")}
+    missing_axes = [axis for axis in AXES.values() if axis not in present_axes]
+    if missing_axes:
+        analysis_warnings.append("Missing usable chirp axes: " + ", ".join(missing_axes))
+
+    warnings.extend(sorted(set(analysis_warnings)))
+    confidence = _confidence(usable_count, present_axes, segments)
 
     return {
         "available": usable_count > 0,
         "reason": None if usable_count > 0 else "no_usable_segments",
+        "confidence": confidence,
         "debug_mode": debug_mode,
         "settings": {key: settings[key] for key in sorted(settings) if key.startswith("chirp_") or key in {"debug_mode", "blackbox_high_resolution"}},
         "sample_rate_hz": sample_rate_hz,
@@ -149,6 +166,7 @@ def _find_segments(rows: list[dict[str, float | int]], csv_path: str) -> list[di
                 "start_time_seconds": float(row["time"]) / 1_000_000.0,
                 "end_time_seconds": float(row["time"]) / 1_000_000.0,
                 "samples": 1,
+                "motor_saturation_samples": 0,
             }
         else:
             current["end_index"] = index
@@ -286,3 +304,22 @@ def _accumulate_axis(axis_summary: dict[str, Any], metrics: dict[str, Any]) -> N
         value = metrics.get(key)
         if value is not None and np.isfinite(value):
             axis_summary[f"_{key}_sum"] = axis_summary.get(f"_{key}_sum", 0.0) + float(value)
+
+
+def _confidence(usable_count: int, present_axes: set[str], segments: list[dict[str, Any]]) -> str:
+    if usable_count == 0:
+        return "none"
+    usable_segments = [segment for segment in segments if segment.get("usable")]
+    if not usable_segments:
+        return "none"
+    coherence_values = [
+        segment["frequency_response"].get("mean_coherence_5_100hz") or 0.0
+        for segment in usable_segments
+    ]
+    min_coherence = min(coherence_values)
+    has_saturation = any((segment.get("motor_saturation_samples") or 0) > 0 for segment in usable_segments)
+    if len(present_axes) == 3 and min_coherence >= GOOD_MEAN_COHERENCE and not has_saturation:
+        return "high"
+    if min_coherence >= COHERENCE_THRESHOLD and not has_saturation:
+        return "medium"
+    return "low"

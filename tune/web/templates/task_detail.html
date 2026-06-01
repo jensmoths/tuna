@@ -10,5 +10,16 @@
 <div class="card danger"><h2>Approve for Tuning Agent write-back</h2><p>This does not write to the FC from the web UI. It records Operator approval. The Tuning Agent must perform write-back through FCS and record success or failure.</p><form method="post" action="/tasks/{{ task.id }}/approve-write"><label><input type="checkbox" name="safety_confirmed" value="yes"> I confirm the correct Build/FC is connected and the aircraft is safe for FC write-back.</label><p><button type="submit">Approve for write-back</button></p></form></div>
 <div class="card"><h2>Reject</h2><form method="post" action="/tasks/{{ task.id }}/reject"><label>Operator reason</label><textarea name="reason" required></textarea><p><button type="submit">Reject Tune Update</button></p></form></div>
 {% endif %}
+{% elif task.kind == 'request_chirp_capture' %}
+<h2>Chirp capture checklist</h2>
+<div class="card">
+  <h3>Setup</h3><ul>{% for item in task.payload.setup_checklist %}<li>{{ item }}</li>{% endfor %}</ul>
+  <h3>Pilot instructions</h3><ul>{% for item in task.payload.pilot_instructions %}<li>{{ item }}</li>{% endfor %}</ul>
+  <p><strong>Expected result:</strong> {{ task.payload.expected_analysis }}</p>
+</div>
+{% if task.status == 'open' %}
+<div class="card"><h2>Resolve chirp capture request</h2><form method="post" action="/tasks/{{ task.id }}/resolve-chirp-capture"><label><input type="checkbox" name="captured" value="yes"> Chirp Blackbox Log was captured/transferred for Import</label><label>Operator notes</label><textarea name="notes"></textarea><p><button type="submit">Resolve task</button></p></form></div>
+{% endif %}
+<h2>Payload</h2><pre>{{ task.payload | tojson(indent=2) }}</pre>
 {% else %}<h2>Payload</h2><pre>{{ task.payload | tojson(indent=2) }}</pre>{% endif %}
 {% endblock %}
