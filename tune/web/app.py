@@ -8,6 +8,7 @@ from flask import Flask, redirect, render_template, request, url_for
 from tune.services.operator_tasks import resolve_task
 from tune.services.tune_updates import approve_for_write, reject
 from tune.storage import connect, init_db
+from tune.web.pi_supervisor import PiRpcSupervisor
 
 
 def _dict(row):
@@ -17,11 +18,24 @@ def _dict(row):
 def create_app(db_path: str | Path) -> Flask:
     app = Flask(__name__)
     app.config["TUNE_DB"] = str(db_path)
+    app.config.setdefault("TUNE_PI_COMMAND", "pi")
+    app.config.setdefault("TUNE_WORKDIR", str(Path.cwd()))
 
     def db():
         conn = connect(app.config["TUNE_DB"])
         init_db(conn)
         return conn
+
+    def supervisor() -> PiRpcSupervisor:
+        existing = app.extensions.get("tuna_pi_supervisor")
+        if existing is None:
+            existing = PiRpcSupervisor(
+                app.config["TUNE_DB"],
+                cwd=app.config["TUNE_WORKDIR"],
+                pi_command=app.config["TUNE_PI_COMMAND"],
+            )
+            app.extensions["tuna_pi_supervisor"] = existing
+        return existing
 
     @app.get("/")
     def dashboard():
@@ -73,6 +87,7 @@ def create_app(db_path: str | Path) -> Flask:
         if not loop:
             return "Loop not found", 404
         loop["fc_snapshot"] = json.loads(loop["fc_snapshot_json"])
+        agent_session = _dict(conn.execute("SELECT * FROM tuning_agent_sessions WHERE loop_id = ?", (loop_id,)).fetchone())
 
         iteration_rows = conn.execute(
             "SELECT * FROM tuning_iterations WHERE loop_id = ? ORDER BY created_at DESC, id DESC",
@@ -102,7 +117,22 @@ def create_app(db_path: str | Path) -> Flask:
             item["update"] = update
             iterations.append(item)
 
-        return render_template("loop_detail.html", loop=loop, iterations=iterations)
+        return render_template("loop_detail.html", loop=loop, iterations=iterations, agent_session=agent_session)
+
+    @app.post("/loops/<int:loop_id>/tuning-agent/start")
+    def start_tuning_agent(loop_id: int):
+        conn = db()
+        loop = conn.execute("SELECT id FROM loops WHERE id = ?", (loop_id,)).fetchone()
+        if not loop:
+            return "Loop not found", 404
+        bridge_host = request.form.get("bridge_host", "").strip()
+        supervisor().start_loop(loop_id, bridge_host=bridge_host)
+        return redirect(url_for("loop_detail", loop_id=loop_id))
+
+    @app.post("/loops/<int:loop_id>/tuning-agent/abort")
+    def abort_tuning_agent(loop_id: int):
+        supervisor().abort_loop(loop_id)
+        return redirect(url_for("loop_detail", loop_id=loop_id))
 
     @app.get("/tasks/<int:task_id>")
     def task_detail(task_id: int):

@@ -87,6 +87,19 @@ CREATE TABLE IF NOT EXISTS operator_tasks (
 );
 
 
+CREATE TABLE IF NOT EXISTS tuning_agent_sessions (
+  loop_id INTEGER PRIMARY KEY REFERENCES loops(id),
+  pi_session_id TEXT,
+  pi_session_file TEXT,
+  status TEXT NOT NULL DEFAULT 'Idle',
+  bridge_host TEXT NOT NULL DEFAULT '',
+  process_id INTEGER,
+  last_error TEXT,
+  started_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+
 CREATE TABLE IF NOT EXISTS decoded_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   log_id INTEGER NOT NULL REFERENCES blackbox_logs(id),
