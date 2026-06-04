@@ -1,0 +1,6 @@
+{% extends "layout.html" %}{% block body %}
+<h1>Operator Notifications</h1>
+<table><tr><th>ID</th><th>Status</th><th>Kind</th><th>Title</th><th>Created</th></tr>
+{% for notification in notifications %}<tr><td><a href="/notifications/{{ notification.id }}">{{ notification.id }}</a></td><td>{{ notification.status }}</td><td>{{ notification.kind }}</td><td>{{ notification.title }}</td><td>{{ notification.created_at }}</td></tr>{% endfor %}
+</table>
+{% endblock %}

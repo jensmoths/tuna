@@ -65,7 +65,11 @@ Use FCS/MSP to extract what is available from the FC when hardware is connected:
 - board/target details where available
 - current tune snapshot where available
 
-Then ask the **Operator** to confirm whether this is an existing **Build** or a new **Build**. Record the result with `tune`.
+Then create a `confirm_build` **Operator Task** if human confirmation is needed. The Operator Console records whether the snapshot matches an existing **Build**, requires a new **Build**, or cannot be confirmed; the **Tuning Agent** decides the next workflow action and records the resulting **Build** with `tune`.
+
+```bash
+tune --db tune.sqlite3 task confirm-build --fc-snapshot-json '{"fc_variant":"BTFL"}' --json
+```
 
 Example:
 
@@ -75,7 +79,11 @@ tune --db tune.sqlite3 build create "5-inch freestyle" --fc-snapshot-json '{"fc_
 
 ### 2. Establish or confirm Loop
 
-Create a **Loop** only after the **Build** and **Tune Goal** are clear.
+Create a **Loop** only after the **Build** and **Tune Goal** are clear. If the **Tune Goal** is unclear, create a `request_tune_goal` **Operator Task** and use the response before creating the **Loop**.
+
+```bash
+tune --db tune.sqlite3 task request-tune-goal --build-id 1 --json
+```
 
 ```bash
 tune --db tune.sqlite3 loop create --build-id 1 --tune-goal "reduce propwash while preserving freestyle response" --json
@@ -150,7 +158,7 @@ If `blackbox_decode` is not installed, report that dependency clearly and fall b
 
 Chirp diagnostic **Blackbox Logs** are supported as analysis evidence when the decoded CSV contains `debug[0..3]`, `setpoint[0..2]`, and `gyroADC[0..2]`. In analysis JSON, inspect `chirp_analysis` for per-axis chirp segments and frequency-response metrics such as coherence, bandwidth, gain crossover, phase margin, and resonant peak. Treat `chirp_analysis.available=false` and its warnings as evidence that the log was not captured with usable chirp data.
 
-Use chirp as an optional diagnostic capture, not a normal replacement for all flight analysis. Request a chirp capture when normal **Blackbox Logs** do not provide enough control-loop evidence.
+Use chirp as an optional diagnostic capture, not a normal replacement for all flight analysis. When chirp evidence is needed, perform diagnostic setup through **FCS**, record an **Operator Notification**, then create a general **Operator Task** asking the **Operator/Pilot** to fly and capture another **Blackbox Log**.
 
 ### 5. Start a Tuning Iteration
 
@@ -265,12 +273,12 @@ Examples include requesting fields or modes needed for:
 Rules:
 
 - Treat Blackbox configuration changes as diagnostic/logging changes, not as **Tune Updates**, unless they also alter flight behavior.
-- Do not silently change FC configuration. Create an **Operator Task** explaining what Blackbox setting change is needed and why.
-- Require **Operator** approval before writing Blackbox/logging configuration to the FC.
-- Use **FCS** for write-back after approval; the Operator Console must not write to the FC directly.
+- Do not silently change FC configuration. After changing diagnostic Blackbox/logging configuration through **FCS**, record an **Operator Notification** explaining what changed and why.
+- **Operator** approval is not required for diagnostic-only Blackbox/logging configuration changes. If a requested setting changes flight behavior or is also a **Tune Update**, use the **Tune Update** review gate instead.
+- Use **FCS** for Blackbox/logging configuration write-back; the Operator Console must not write to the FC directly.
 - Record success or failure in Tuna state so later **Diagnoses** know which logs were captured with which settings.
 - Prefer the smallest logging change that gives the analysis tool the missing data.
-- If the requested Blackbox setting could affect performance, storage use, or flight behavior, call that out explicitly in the **Operator Task**.
+- If the requested Blackbox setting could affect performance, storage use, or flight behavior, call that out explicitly in the **Operator Notification**.
 
 When analysis is limited by missing fields, say so in the **Diagnosis** or next-step recommendation instead of guessing.
 
@@ -282,7 +290,8 @@ Rules:
 
 - Do not trigger chirp automatically from Tuna.
 - Do not treat chirp-derived metrics as an automatic **Tune Update**.
-- Ask the **Operator** before requesting chirp setup or capture.
+- The **Tuning Agent** owns chirp diagnostic setup through **FCS** when hardware is connected; do not ask the **Operator** to configure chirp manually as a normal workflow step.
+- After chirp setup, create an **Operator Notification** describing changed Blackbox/logging settings, then create a general `request_flight_capture` **Operator Task** for the follow-up flight and **Blackbox Log** capture.
 - The **Pilot** flies the chirp maneuver in open space and remains responsible for safe flight.
 - Use chirp results as evidence in a **Diagnosis**; any resulting **Tune Update** still requires **Operator** review.
 

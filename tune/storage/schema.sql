@@ -87,6 +87,19 @@ CREATE TABLE IF NOT EXISTS operator_tasks (
 );
 
 
+CREATE TABLE IF NOT EXISTS operator_notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open',
+  title TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  acknowledged_json TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  acknowledged_at TEXT
+);
+
+
 CREATE TABLE IF NOT EXISTS tuning_agent_sessions (
   loop_id INTEGER PRIMARY KEY REFERENCES loops(id),
   pi_session_id TEXT,

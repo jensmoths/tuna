@@ -14,7 +14,8 @@ from tune.services.iterations import complete_no_change, create_iteration
 from tune.services.logs import import_blackbox_log
 from tune.services.segment_rows import get_segment_rows
 from tune.services.loops import create_loop
-from tune.services.operator_tasks import create_chirp_capture_task, create_task
+from tune.services.operator_notifications import create_blackbox_config_notification
+from tune.services.operator_tasks import create_build_confirmation_task, create_flight_capture_task, create_task, create_tune_goal_task
 from tune.services.tune_updates import approve_for_write, mark_applied, propose_tune_update, reject, record_application_failure
 from tune.storage import connect, init_db
 
@@ -163,12 +164,34 @@ def main(argv: list[str] | None = None) -> int:
     task_create.add_argument("--body", default="")
     task_create.add_argument("--payload-json", default="{}")
     _add_json(task_create)
-    task_chirp = task_sub.add_parser("request-chirp-capture")
-    task_chirp.add_argument("--build-id", type=int)
-    task_chirp.add_argument("--loop-id", type=int)
-    task_chirp.add_argument("--reason", default="Normal Blackbox Logs do not provide enough control-loop frequency-response evidence.")
-    _add_json(task_chirp)
+    task_flight = task_sub.add_parser("request-flight-capture")
+    task_flight.add_argument("--build-id", type=int)
+    task_flight.add_argument("--loop-id", type=int)
+    task_flight.add_argument("--reason", default="Need another Blackbox Log for tuning evidence.")
+    task_flight.add_argument("--capture-goal", default="Capture a useful follow-up Blackbox Log for the current Tune Goal.")
+    _add_json(task_flight)
+    task_build = task_sub.add_parser("confirm-build")
+    task_build.add_argument("--fc-snapshot-json", required=True)
+    task_build.add_argument("--candidate-build-id", type=int)
+    task_build.add_argument("--reason", default="Confirm which Build is connected before starting or continuing a Loop.")
+    _add_json(task_build)
+    task_goal = task_sub.add_parser("request-tune-goal")
+    task_goal.add_argument("--build-id", type=int)
+    task_goal.add_argument("--reason", default="Define the Tune Goal before starting a Loop.")
+    _add_json(task_goal)
     _add_json(task_sub.add_parser("list"))
+
+    notify = top.add_parser("notify")
+    notify_sub = notify.add_subparsers(dest="action", required=True)
+    notify_blackbox = notify_sub.add_parser("blackbox-config-changed")
+    notify_blackbox.add_argument("--build-id", type=int)
+    notify_blackbox.add_argument("--loop-id", type=int)
+    notify_blackbox.add_argument("--settings-json", required=True)
+    notify_blackbox.add_argument("--previous-settings-json", default="{}")
+    notify_blackbox.add_argument("--reason", required=True)
+    notify_blackbox.add_argument("--impact", default="")
+    _add_json(notify_blackbox)
+    _add_json(notify_sub.add_parser("list"))
 
     web = top.add_parser("web")
     web.add_argument("--host", default="127.0.0.1")
@@ -342,11 +365,35 @@ def main(argv: list[str] | None = None) -> int:
     elif args.area == "task" and args.action == "create":
         task_id = create_task(conn, args.kind, args.title, body=args.body, payload=json.loads(args.payload_json))
         _emit({"task_id": task_id}, args.json)
-    elif args.area == "task" and args.action == "request-chirp-capture":
-        task_id = create_chirp_capture_task(conn, build_id=args.build_id, loop_id=args.loop_id, reason=args.reason)
-        _emit({"task_id": task_id, "kind": "request_chirp_capture"}, args.json)
+    elif args.area == "task" and args.action == "request-flight-capture":
+        task_id = create_flight_capture_task(conn, build_id=args.build_id, loop_id=args.loop_id, reason=args.reason, capture_goal=args.capture_goal)
+        _emit({"task_id": task_id, "kind": "request_flight_capture"}, args.json)
+    elif args.area == "task" and args.action == "confirm-build":
+        task_id = create_build_confirmation_task(
+            conn,
+            fc_snapshot=json.loads(args.fc_snapshot_json),
+            candidate_build_id=args.candidate_build_id,
+            reason=args.reason,
+        )
+        _emit({"task_id": task_id, "kind": "confirm_build"}, args.json)
+    elif args.area == "task" and args.action == "request-tune-goal":
+        task_id = create_tune_goal_task(conn, build_id=args.build_id, reason=args.reason)
+        _emit({"task_id": task_id, "kind": "request_tune_goal"}, args.json)
     elif args.area == "task" and args.action == "list":
         _print_json([_row_to_dict(row) for row in conn.execute("SELECT * FROM operator_tasks ORDER BY status, created_at DESC, id DESC")])
+    elif args.area == "notify" and args.action == "blackbox-config-changed":
+        notification_id = create_blackbox_config_notification(
+            conn,
+            build_id=args.build_id,
+            loop_id=args.loop_id,
+            settings=json.loads(args.settings_json),
+            previous_settings=json.loads(args.previous_settings_json),
+            reason=args.reason,
+            impact=args.impact,
+        )
+        _emit({"notification_id": notification_id, "kind": "blackbox_config_changed"}, args.json)
+    elif args.area == "notify" and args.action == "list":
+        _print_json([_row_to_dict(row) for row in conn.execute("SELECT * FROM operator_notifications ORDER BY status, created_at DESC, id DESC")])
     elif args.area == "web":
         from tune.web.app import create_app
         create_app(args.db).run(host=args.host, port=args.port)
@@ -357,6 +404,7 @@ def main(argv: list[str] | None = None) -> int:
             "iterations_open": conn.execute("SELECT COUNT(*) FROM tuning_iterations WHERE status = 'open'").fetchone()[0],
             "logs": conn.execute("SELECT COUNT(*) FROM blackbox_logs").fetchone()[0],
             "open_tasks": conn.execute("SELECT COUNT(*) FROM operator_tasks WHERE status = 'open'").fetchone()[0],
+            "open_notifications": conn.execute("SELECT COUNT(*) FROM operator_notifications WHERE status = 'open'").fetchone()[0],
             "pending_writes": conn.execute("SELECT COUNT(*) FROM tune_updates WHERE status = 'approved_pending_write'").fetchone()[0],
         })
     else:

@@ -2,6 +2,8 @@
 
 Decisions recorded before implementing the Tuna workflow model.
 
+See `docs/domain-model.md` for canonical Tuna vocabulary and domain rules.
+
 ## Naming and boundaries
 
 - **Tuna** is the whole drone-tuning system/product.
@@ -51,12 +53,23 @@ Decisions recorded before implementing the Tuna workflow model.
 
 - Use a simple local Flask web UI as the Operator Console.
 - The Operator Console is local-only by default (`127.0.0.1`).
+- The Operator Console owns the Pi RPC supervisor for running Pi as the
+  **Tuning Agent**; see `docs/pi-tuning-agent-rpc.md`.
+- Use one persistent Pi session per **Loop**.
+- The Operator Console shows Tuning Agent status by default, not the full Pi
+  transcript.
 - Keep the UI plain black and white; prioritize clear review UX over visual styling.
-- The Operator Console shows dashboard state, **Operator Tasks**, **Tune Updates**, and imported **Blackbox Logs**.
+- The Operator Console shows dashboard state, **Operator Tasks**, **Operator Notifications**, **Tune Updates**, and imported **Blackbox Logs**.
 - **Operator Tasks** are durable structured requests from the **Tuning Agent** to the **Operator**.
 - **Operator Tasks** are not free-form chat; they are review/confirmation/action cards with structured payloads and responses.
 - The **Tuning Agent** creates **Operator Tasks** when it needs human input.
+- **Operator Notifications** are durable informational records, stored separately from **Operator Tasks**, for actions the **Tuning Agent** already performed or facts the **Operator** should know.
+- The **Tuning Agent** records **Operator Notifications** for diagnostic-only Blackbox/logging setting changes it already made through **FCS**; these do not require **Operator** approval.
 - The Operator Console records **Operator Task** responses into `tune` state.
+- The Operator Console records **Operator Notification** acknowledgements into `tune` state.
+- For `confirm_build` tasks, the Operator Console records whether the FC snapshot matches an existing **Build**, requires a new **Build**, or cannot be confirmed; the **Tuning Agent** decides the next workflow action.
+- For `request_tune_goal` tasks, the Operator Console records the Operator's requested **Tune Goal**; the **Tuning Agent** uses that response before creating a **Loop**.
+- For `request_flight_capture` tasks, the Operator Console shows the capture goal, Pilot instructions, and **Post-flight Transfer** / **Import** steps; diagnostic FC setup is the **Tuning Agent**'s responsibility through **FCS** before creating the task.
 - For `review_tune_update` tasks, the Operator Console shows the **Diagnosis**, structured settings, and Betaflight CLI artifact.
 - Approving a `review_tune_update` task requires a safety confirmation checkbox and changes the **Tune Update** to `approved_pending_write`.
 - Rejecting a `review_tune_update` task requires an **Operator** reason and changes the **Tune Update** to `rejected`.

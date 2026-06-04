@@ -13,7 +13,8 @@ from tune.services.builds import create_build
 from tune.services.diagnoses import record_diagnosis
 from tune.services.iterations import complete_no_change, create_iteration
 from tune.services.loops import create_loop
-from tune.services.operator_tasks import create_chirp_capture_task, create_task
+from tune.services.operator_notifications import create_blackbox_config_notification
+from tune.services.operator_tasks import create_build_confirmation_task, create_flight_capture_task, create_task, create_tune_goal_task
 from tune.services.tune_updates import propose_tune_update
 from tune.storage import connect, init_db
 from tune.services.analysis import analyze_imported_log
@@ -73,18 +74,76 @@ class OperatorWebTests(unittest.TestCase):
         self.assertIn(b"Segments", detail.data)
         self.assertIn(b"Chirp analysis", detail.data)
 
-    def test_chirp_capture_task_shows_checklist_and_resolves(self):
-        task_id = create_chirp_capture_task(self.conn, build_id=1, loop_id=2, reason="Need cleaner roll/pitch/yaw response evidence")
+    def test_flight_capture_task_shows_instructions_and_resolves(self):
+        task_id = create_flight_capture_task(self.conn, build_id=1, loop_id=2, reason="Need cleaner roll/pitch/yaw response evidence")
         client = create_app(self.db_path).test_client()
         page = client.get(f"/tasks/{task_id}")
         self.assertEqual(page.status_code, 200)
-        self.assertIn(b"Chirp capture checklist", page.data)
-        self.assertIn(b"debug_mode = CHIRP", page.data)
-        response = client.post(f"/tasks/{task_id}/resolve-chirp-capture", data={"captured": "yes", "notes": "Captured LOG001"})
+        self.assertIn(b"Flight capture request", page.data)
+        self.assertIn(b"Post-flight Transfer", page.data)
+        response = client.post(f"/tasks/{task_id}/resolve-flight-capture", data={"imported": "yes", "notes": "Imported LOG001"})
         self.assertEqual(response.status_code, 302)
         task = self.conn.execute("SELECT status, response_json FROM operator_tasks WHERE id = ?", (task_id,)).fetchone()
         self.assertEqual(task["status"], "resolved")
-        self.assertIn("captured", task["response_json"])
+        self.assertIn("imported", task["response_json"])
+
+    def test_build_confirmation_task_shows_snapshot_and_resolves(self):
+        task_id = create_build_confirmation_task(
+            self.conn,
+            candidate_build_id=3,
+            fc_snapshot={"fc_variant": "BTFL", "fc_version": "4.5.2"},
+        )
+        client = create_app(self.db_path).test_client()
+        page = client.get(f"/tasks/{task_id}")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Build confirmation", page.data)
+        self.assertIn(b"BTFL", page.data)
+        response = client.post(
+            f"/tasks/{task_id}/resolve-build-confirmation",
+            data={"decision": "matches_existing_build", "build_id": "3", "notes": "Confirmed airframe"},
+        )
+        self.assertEqual(response.status_code, 302)
+        task = self.conn.execute("SELECT status, response_json FROM operator_tasks WHERE id = ?", (task_id,)).fetchone()
+        self.assertEqual(task["status"], "resolved")
+        self.assertIn("matches_existing_build", task["response_json"])
+
+    def test_tune_goal_task_shows_prompt_and_resolves(self):
+        task_id = create_tune_goal_task(self.conn, build_id=3)
+        client = create_app(self.db_path).test_client()
+        page = client.get(f"/tasks/{task_id}")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Tune Goal request", page.data)
+        response = client.post(
+            f"/tasks/{task_id}/resolve-tune-goal",
+            data={"tune_goal": "Reduce propwash", "notes": "Keep freestyle feel"},
+        )
+        self.assertEqual(response.status_code, 302)
+        task = self.conn.execute("SELECT status, response_json FROM operator_tasks WHERE id = ?", (task_id,)).fetchone()
+        self.assertEqual(task["status"], "resolved")
+        self.assertIn("Reduce propwash", task["response_json"])
+
+    def test_blackbox_config_notification_shows_change_and_acknowledges(self):
+        notification_id = create_blackbox_config_notification(
+            self.conn,
+            build_id=1,
+            loop_id=2,
+            settings={"debug_mode": "CHIRP", "blackbox_high_resolution": "ON"},
+            previous_settings={"debug_mode": "GYRO_SCALED"},
+            reason="Need chirp frequency-response evidence in the next Blackbox Log",
+            impact="Higher Blackbox Log storage use while diagnostic logging is enabled",
+        )
+        client = create_app(self.db_path).test_client()
+        page = client.get(f"/notifications/{notification_id}")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Operator Notification", page.data)
+        self.assertIn(b"debug_mode", page.data)
+        self.assertIn(b"Approval required", page.data)
+
+        response = client.post(f"/notifications/{notification_id}/acknowledge", data={"notes": "Seen"})
+        self.assertEqual(response.status_code, 302)
+        notification = self.conn.execute("SELECT status, acknowledged_json FROM operator_notifications WHERE id = ?", (notification_id,)).fetchone()
+        self.assertEqual(notification["status"], "acknowledged")
+        self.assertIn("acknowledged", notification["acknowledged_json"])
 
     def test_loop_pages_show_iteration_diagnosis_and_no_change_result(self):
         build_id = create_build(self.conn, "5 inch", fc_snapshot={"fc_variant": "BTFL"}, operator_notes="Operator-confirmed Build")

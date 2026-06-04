@@ -192,7 +192,7 @@ PIDtoolbox is known for spectral analysis and frequency-vs-throttle views. Tuna 
 ## TODO: Blackbox logging configuration support
 
 - Implemented first pass: analysis warnings name missing Blackbox fields or debug modes needed for a stronger **Diagnosis**.
-- Add **Operator Task** kind for approving diagnostic Blackbox setting changes.
+- Implemented: separate **Operator Notification** storage and UI for diagnostic Blackbox setting changes made by the **Tuning Agent** through FCS.
 - Add FCS helpers for reading and writing relevant Betaflight Blackbox settings.
 - Record Blackbox setting snapshots with imported **Blackbox Logs** so the **Tuning Agent** knows which analysis features are valid for each log.
 - Keep diagnostic Blackbox setting changes separate from **Tune Updates** unless the setting also affects flight behavior.
@@ -203,5 +203,5 @@ PIDtoolbox is known for spectral analysis and frequency-vs-throttle views. Tuna 
 - Verify decoded CSV header parsing against real `blackbox_decode` output for chirp logs, especially `debug_mode`, `blackbox_high_resolution`, chirp parameter rows, and field names.
 - Verify high-resolution scaling assumptions for setpoint/gyro in decoded CSV chirp logs.
 - Compare Tuna chirp metrics against Betaflight Configurator's Autotune tab and `bf_controller_tuning` on the same log.
-- Add an **Operator Task** kind/template for requesting a chirp diagnostic capture, including setup checklist and Pilot flight instructions.
+- Implemented: general `request_flight_capture` **Operator Task** kind/template for requesting another flight and **Blackbox Log** capture; chirp-specific setup belongs in prior FCS writes plus **Operator Notifications**.
 - Add a fixture real chirp log or trimmed decoded CSV fixture once available, with regression tests for segment detection and frequency-response metrics.

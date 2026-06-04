@@ -5,6 +5,7 @@ from pathlib import Path
 
 from flask import Flask, redirect, render_template, request, url_for
 
+from tune.services.operator_notifications import acknowledge_notification as acknowledge_operator_notification
 from tune.services.operator_tasks import resolve_task
 from tune.services.tune_updates import approve_for_write, reject
 from tune.storage import connect, init_db
@@ -45,17 +46,25 @@ def create_app(db_path: str | Path) -> Flask:
             "open_loops": conn.execute("SELECT COUNT(*) FROM loops WHERE status = 'open'").fetchone()[0],
             "open_iterations": conn.execute("SELECT COUNT(*) FROM tuning_iterations WHERE status = 'open'").fetchone()[0],
             "open_tasks": conn.execute("SELECT COUNT(*) FROM operator_tasks WHERE status = 'open'").fetchone()[0],
+            "open_notifications": conn.execute("SELECT COUNT(*) FROM operator_notifications WHERE status = 'open'").fetchone()[0],
             "pending_writes": conn.execute("SELECT COUNT(*) FROM tune_updates WHERE status = 'approved_pending_write'").fetchone()[0],
         }
         tasks = conn.execute("SELECT * FROM operator_tasks WHERE status = 'open' ORDER BY created_at, id LIMIT 5").fetchall()
+        notifications = conn.execute("SELECT * FROM operator_notifications WHERE status = 'open' ORDER BY created_at, id LIMIT 5").fetchall()
         updates = conn.execute("SELECT * FROM tune_updates WHERE status IN ('proposed','approved_pending_write','write_failed') ORDER BY created_at DESC LIMIT 5").fetchall()
-        return render_template("dashboard.html", counts=counts, tasks=tasks, updates=updates)
+        return render_template("dashboard.html", counts=counts, tasks=tasks, notifications=notifications, updates=updates)
 
     @app.get("/tasks")
     def tasks():
         conn = db()
         rows = conn.execute("SELECT * FROM operator_tasks ORDER BY status, created_at DESC, id DESC").fetchall()
         return render_template("tasks.html", tasks=rows)
+
+    @app.get("/notifications")
+    def notifications():
+        conn = db()
+        rows = conn.execute("SELECT * FROM operator_notifications ORDER BY status, created_at DESC, id DESC").fetchall()
+        return render_template("notifications.html", notifications=rows)
 
     @app.get("/loops")
     def loops():
@@ -179,20 +188,82 @@ def create_app(db_path: str | Path) -> Flask:
         resolve_task(conn, task_id, {"decision": "rejected", "reason": reason, "tune_update_id": update_id})
         return redirect(url_for("tasks"))
 
-    @app.post("/tasks/<int:task_id>/resolve-chirp-capture")
-    def resolve_chirp_capture(task_id: int):
+    @app.post("/tasks/<int:task_id>/resolve-flight-capture")
+    def resolve_flight_capture(task_id: int):
         conn = db()
         task = conn.execute("SELECT * FROM operator_tasks WHERE id = ?", (task_id,)).fetchone()
         if not task:
             return "Task not found", 404
-        if task["kind"] != "request_chirp_capture":
-            return "Task is not a chirp capture request", 400
-        captured = request.form.get("captured") == "yes"
+        if task["kind"] != "request_flight_capture":
+            return "Task is not a flight capture request", 400
+        imported = request.form.get("imported") == "yes"
         notes = request.form.get("notes", "").strip()
-        if not captured and not notes:
-            return "Notes are required if chirp capture was not completed", 400
-        resolve_task(conn, task_id, {"decision": "captured" if captured else "not_captured", "notes": notes})
+        if not imported and not notes:
+            return "Notes are required if the Blackbox Log was not imported", 400
+        resolve_task(conn, task_id, {"decision": "imported" if imported else "not_imported", "notes": notes})
         return redirect(url_for("tasks"))
+
+    @app.post("/tasks/<int:task_id>/resolve-build-confirmation")
+    def resolve_build_confirmation(task_id: int):
+        conn = db()
+        task = conn.execute("SELECT * FROM operator_tasks WHERE id = ?", (task_id,)).fetchone()
+        if not task:
+            return "Task not found", 404
+        if task["kind"] != "confirm_build":
+            return "Task is not a Build confirmation request", 400
+        decision = request.form.get("decision", "").strip()
+        if decision not in {"matches_existing_build", "create_new_build", "cannot_confirm"}:
+            return "Valid Build confirmation decision is required", 400
+        build_id = request.form.get("build_id", "").strip()
+        build_name = request.form.get("build_name", "").strip()
+        notes = request.form.get("notes", "").strip()
+        if decision == "matches_existing_build" and not build_id:
+            return "Build id is required when confirming an existing Build", 400
+        if decision == "create_new_build" and not build_name:
+            return "Build name is required when requesting a new Build", 400
+        if decision == "cannot_confirm" and not notes:
+            return "Notes are required if the Build cannot be confirmed", 400
+        response = {"decision": decision, "notes": notes}
+        if build_id:
+            response["build_id"] = int(build_id)
+        if build_name:
+            response["build_name"] = build_name
+        resolve_task(conn, task_id, response)
+        return redirect(url_for("tasks"))
+
+    @app.post("/tasks/<int:task_id>/resolve-tune-goal")
+    def resolve_tune_goal(task_id: int):
+        conn = db()
+        task = conn.execute("SELECT * FROM operator_tasks WHERE id = ?", (task_id,)).fetchone()
+        if not task:
+            return "Task not found", 404
+        if task["kind"] != "request_tune_goal":
+            return "Task is not a Tune Goal request", 400
+        tune_goal = request.form.get("tune_goal", "").strip()
+        if not tune_goal:
+            return "Tune Goal is required", 400
+        notes = request.form.get("notes", "").strip()
+        resolve_task(conn, task_id, {"decision": "provided", "tune_goal": tune_goal, "notes": notes})
+        return redirect(url_for("tasks"))
+
+    @app.get("/notifications/<int:notification_id>")
+    def notification_detail(notification_id: int):
+        conn = db()
+        notification = _dict(conn.execute("SELECT * FROM operator_notifications WHERE id = ?", (notification_id,)).fetchone())
+        if not notification:
+            return "Notification not found", 404
+        notification["payload"] = json.loads(notification["payload_json"])
+        return render_template("notification_detail.html", notification=notification)
+
+    @app.post("/notifications/<int:notification_id>/acknowledge")
+    def acknowledge_notification(notification_id: int):
+        conn = db()
+        notification = conn.execute("SELECT * FROM operator_notifications WHERE id = ?", (notification_id,)).fetchone()
+        if not notification:
+            return "Notification not found", 404
+        notes = request.form.get("notes", "").strip()
+        acknowledge_operator_notification(conn, notification_id, {"decision": "acknowledged", "notes": notes})
+        return redirect(url_for("notifications"))
 
     @app.get("/logs")
     def logs():

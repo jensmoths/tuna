@@ -160,6 +160,85 @@ class TuneCliTests(unittest.TestCase):
         self.assertNotIn("ranges", result)
         self.assertIn("ranges", json.loads(full_json.read_text()))
 
+    def test_request_flight_capture_cli_records_operator_task(self):
+        self.run_cli_json("db", "init")
+        result = self.run_cli_json(
+            "task",
+            "request-flight-capture",
+            "--build-id",
+            "1",
+            "--loop-id",
+            "2",
+            "--reason",
+            "Need a follow-up Blackbox Log",
+            "--capture-goal",
+            "Capture propwash recovery maneuvers",
+        )
+
+        self.assertEqual(result["kind"], "request_flight_capture")
+        tasks = self.run_cli_json("task", "list")
+        self.assertEqual(tasks[0]["id"], result["task_id"])
+        self.assertEqual(tasks[0]["kind"], "request_flight_capture")
+        payload = json.loads(tasks[0]["payload_json"])
+        self.assertEqual(payload["capture_goal"], "Capture propwash recovery maneuvers")
+        self.assertIn("pilot_instructions", payload)
+        self.assertIn("post_flight_steps", payload)
+
+    def test_confirm_build_cli_records_operator_task(self):
+        self.run_cli_json("db", "init")
+        result = self.run_cli_json(
+            "task",
+            "confirm-build",
+            "--candidate-build-id",
+            "3",
+            "--fc-snapshot-json",
+            '{"fc_variant":"BTFL","fc_version":"4.5.2"}',
+        )
+
+        self.assertEqual(result["kind"], "confirm_build")
+        tasks = self.run_cli_json("task", "list")
+        self.assertEqual(tasks[0]["kind"], "confirm_build")
+        payload = json.loads(tasks[0]["payload_json"])
+        self.assertEqual(payload["candidate_build_id"], 3)
+        self.assertEqual(payload["fc_snapshot"]["fc_variant"], "BTFL")
+
+    def test_request_tune_goal_cli_records_operator_task(self):
+        self.run_cli_json("db", "init")
+        result = self.run_cli_json("task", "request-tune-goal", "--build-id", "3")
+
+        self.assertEqual(result["kind"], "request_tune_goal")
+        tasks = self.run_cli_json("task", "list")
+        self.assertEqual(tasks[0]["kind"], "request_tune_goal")
+        payload = json.loads(tasks[0]["payload_json"])
+        self.assertEqual(payload["build_id"], 3)
+        self.assertIn("prompt", payload)
+        self.assertIn("examples", payload)
+
+    def test_notify_blackbox_config_changed_cli_records_operator_notification(self):
+        self.run_cli_json("db", "init")
+        result = self.run_cli_json(
+            "notify",
+            "blackbox-config-changed",
+            "--build-id",
+            "1",
+            "--settings-json",
+            '{"debug_mode":"CHIRP"}',
+            "--previous-settings-json",
+            '{"debug_mode":"GYRO_SCALED"}',
+            "--reason",
+            "Need chirp evidence in the next Blackbox Log",
+            "--impact",
+            "Higher Blackbox Log storage use",
+        )
+
+        self.assertEqual(result["kind"], "blackbox_config_changed")
+        notifications = self.run_cli_json("notify", "list")
+        self.assertEqual(notifications[0]["id"], result["notification_id"])
+        self.assertEqual(notifications[0]["kind"], "blackbox_config_changed")
+        payload = json.loads(notifications[0]["payload_json"])
+        self.assertFalse(payload["requires_operator_approval"])
+        self.assertEqual(payload["settings"], {"debug_mode": "CHIRP"})
+
 
 if __name__ == "__main__":
     unittest.main()

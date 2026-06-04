@@ -16,6 +16,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(schema)
     _migrate_tuning_iterations(conn)
     _migrate_tuning_agent_sessions(conn)
+    _migrate_operator_notifications(conn)
     conn.commit()
 
 
@@ -43,3 +44,25 @@ def _migrate_tuning_agent_sessions(conn: sqlite3.Connection) -> None:
         )
         """
     )
+
+
+def _migrate_operator_notifications(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS operator_notifications (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          kind TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'open',
+          title TEXT NOT NULL,
+          body TEXT NOT NULL DEFAULT '',
+          payload_json TEXT NOT NULL DEFAULT '{}',
+          acknowledged_json TEXT,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          acknowledged_at TEXT
+        )
+        """
+    )
+    task_columns = {row["name"] for row in conn.execute("PRAGMA table_info(operator_tasks)")}
+    if not task_columns:
+        return
+    conn.execute("DELETE FROM operator_tasks WHERE kind LIKE 'notify_%'")

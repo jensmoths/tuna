@@ -1,0 +1,20 @@
+{% extends "layout.html" %}{% block body %}
+<h1>{{ notification.title }}</h1>
+<p class="muted">Notification #{{ notification.id }} · {{ notification.kind }} · {{ notification.status }}</p>
+<div class="card"><p>{{ notification.body }}</p></div>
+{% if notification.kind == 'blackbox_config_changed' %}
+<h2>Blackbox/logging setting change</h2>
+<div class="card">
+  <p><strong>Reason:</strong> {{ notification.payload.reason }}</p>
+  <p><strong>Approval required:</strong> {{ notification.payload.requires_operator_approval }}</p>
+  <p><strong>Write path:</strong> {{ notification.payload.write_path }}</p>
+  {% if notification.payload.impact %}<p><strong>Expected impact:</strong> {{ notification.payload.impact }}</p>{% endif %}
+  <h3>Changed settings</h3><pre>{{ notification.payload.settings | tojson(indent=2) }}</pre>
+  {% if notification.payload.previous_settings %}<h3>Previous settings</h3><pre>{{ notification.payload.previous_settings | tojson(indent=2) }}</pre>{% endif %}
+</div>
+{% endif %}
+{% if notification.status == 'open' %}
+<div class="card"><h2>Acknowledge notification</h2><form method="post" action="/notifications/{{ notification.id }}/acknowledge"><label>Operator notes</label><textarea name="notes"></textarea><p><button type="submit">Acknowledge</button></p></form></div>
+{% endif %}
+<h2>Payload</h2><pre>{{ notification.payload | tojson(indent=2) }}</pre>
+{% endblock %}

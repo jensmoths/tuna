@@ -5,6 +5,8 @@
 </div>
 <h2>Needs Operator attention</h2>
 {% for task in tasks %}<div class="card"><div class="status">{{ task.title }}</div><p>{{ task.body }}</p><a href="/tasks/{{ task.id }}">Review task #{{ task.id }}</a></div>{% else %}<p>No open Operator Tasks.</p>{% endfor %}
+<h2>Operator Notifications</h2>
+{% for notification in notifications %}<div class="card"><div class="status">{{ notification.title }}</div><p>{{ notification.body }}</p><a href="/notifications/{{ notification.id }}">View notification #{{ notification.id }}</a></div>{% else %}<p>No open Operator Notifications.</p>{% endfor %}
 <h2>Pending Tune Updates</h2>
 {% for update in updates %}<div class="card">Tune Update #{{ update.id }} — <strong>{{ update.status }}</strong></div>{% else %}<p>No pending Tune Updates.</p>{% endfor %}
 {% endblock %}

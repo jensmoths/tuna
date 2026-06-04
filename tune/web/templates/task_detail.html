@@ -10,15 +10,39 @@
 <div class="card danger"><h2>Approve for Tuning Agent write-back</h2><p>This does not write to the FC from the web UI. It records Operator approval. The Tuning Agent must perform write-back through FCS and record success or failure.</p><form method="post" action="/tasks/{{ task.id }}/approve-write"><label><input type="checkbox" name="safety_confirmed" value="yes"> I confirm the correct Build/FC is connected and the aircraft is safe for FC write-back.</label><p><button type="submit">Approve for write-back</button></p></form></div>
 <div class="card"><h2>Reject</h2><form method="post" action="/tasks/{{ task.id }}/reject"><label>Operator reason</label><textarea name="reason" required></textarea><p><button type="submit">Reject Tune Update</button></p></form></div>
 {% endif %}
-{% elif task.kind == 'request_chirp_capture' %}
-<h2>Chirp capture checklist</h2>
+{% elif task.kind == 'request_flight_capture' %}
+<h2>Flight capture request</h2>
 <div class="card">
-  <h3>Setup</h3><ul>{% for item in task.payload.setup_checklist %}<li>{{ item }}</li>{% endfor %}</ul>
+  <p><strong>Capture goal:</strong> {{ task.payload.capture_goal }}</p>
   <h3>Pilot instructions</h3><ul>{% for item in task.payload.pilot_instructions %}<li>{{ item }}</li>{% endfor %}</ul>
-  <p><strong>Expected result:</strong> {{ task.payload.expected_analysis }}</p>
+  <h3>Post-flight steps</h3><ul>{% for item in task.payload.post_flight_steps %}<li>{{ item }}</li>{% endfor %}</ul>
+  <p><strong>Expected result:</strong> {{ task.payload.expected_result }}</p>
 </div>
 {% if task.status == 'open' %}
-<div class="card"><h2>Resolve chirp capture request</h2><form method="post" action="/tasks/{{ task.id }}/resolve-chirp-capture"><label><input type="checkbox" name="captured" value="yes"> Chirp Blackbox Log was captured/transferred for Import</label><label>Operator notes</label><textarea name="notes"></textarea><p><button type="submit">Resolve task</button></p></form></div>
+<div class="card"><h2>Resolve flight capture request</h2><form method="post" action="/tasks/{{ task.id }}/resolve-flight-capture"><label><input type="checkbox" name="imported" value="yes"> Blackbox Log was captured, transferred, and imported</label><label>Operator notes</label><textarea name="notes"></textarea><p><button type="submit">Resolve task</button></p></form></div>
+{% endif %}
+<h2>Payload</h2><pre>{{ task.payload | tojson(indent=2) }}</pre>
+{% elif task.kind == 'confirm_build' %}
+<h2>Build confirmation</h2>
+<div class="card">
+  <p><strong>Reason:</strong> {{ task.payload.reason }}</p>
+  {% if task.payload.candidate_build_id %}<p><strong>Candidate Build:</strong> #{{ task.payload.candidate_build_id }}</p>{% endif %}
+  <h3>FC snapshot</h3><pre>{{ task.payload.fc_snapshot | tojson(indent=2) }}</pre>
+</div>
+{% if task.status == 'open' %}
+<div class="card"><h2>Resolve Build confirmation</h2><form method="post" action="/tasks/{{ task.id }}/resolve-build-confirmation"><label><input type="radio" name="decision" value="matches_existing_build" required> Snapshot matches an existing Build</label><label>Existing Build id</label><input name="build_id" value="{{ task.payload.candidate_build_id or '' }}"><br><label><input type="radio" name="decision" value="create_new_build"> This should be a new Build</label><label>New Build name</label><input name="build_name"><br><label><input type="radio" name="decision" value="cannot_confirm"> Cannot confirm yet</label><label>Operator notes</label><textarea name="notes"></textarea><p><button type="submit">Resolve task</button></p></form></div>
+{% endif %}
+<h2>Payload</h2><pre>{{ task.payload | tojson(indent=2) }}</pre>
+{% elif task.kind == 'request_tune_goal' %}
+<h2>Tune Goal request</h2>
+<div class="card">
+  <p><strong>Reason:</strong> {{ task.payload.reason }}</p>
+  {% if task.payload.build_id %}<p><strong>Build:</strong> #{{ task.payload.build_id }}</p>{% endif %}
+  <p>{{ task.payload.prompt }}</p>
+  <h3>Examples</h3><ul>{% for item in task.payload.examples %}<li>{{ item }}</li>{% endfor %}</ul>
+</div>
+{% if task.status == 'open' %}
+<div class="card"><h2>Resolve Tune Goal request</h2><form method="post" action="/tasks/{{ task.id }}/resolve-tune-goal"><label>Tune Goal</label><textarea name="tune_goal" required></textarea><label>Operator notes</label><textarea name="notes"></textarea><p><button type="submit">Resolve task</button></p></form></div>
 {% endif %}
 <h2>Payload</h2><pre>{{ task.payload | tojson(indent=2) }}</pre>
 {% else %}<h2>Payload</h2><pre>{{ task.payload | tojson(indent=2) }}</pre>{% endif %}
