@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,10 @@ from fcs_bridge import BridgeTransport, MspClient, discover_fc_capabilities
 from fcs_bridge.blackbox_download import read_bridge_status, transfer_blackbox_log_from_bridge
 from fcs_bridge.blackbox_transfer import erase_dataflash
 from fcs_bridge.writeback import write_betaflight_cli_text_to_bridge
+
+
+def _env_default(name: str, fallback: str) -> str:
+    return os.environ.get(name, fallback)
 
 
 def _print_json(payload: Any) -> None:
@@ -61,20 +66,20 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="area", required=True)
 
     inspect = sub.add_parser("inspect")
-    inspect.add_argument("--bridge-host", default="tuna-bridge-usb")
+    inspect.add_argument("--bridge-host", default=_env_default("FCS_BRIDGE_HOST", "tuna-bridge-usb"), help="FCS Bridge host (default: $FCS_BRIDGE_HOST or tuna-bridge-usb)")
     inspect.add_argument("--port", type=int, default=5761)
     inspect.add_argument("--timeout", type=float, default=2.5)
     inspect.add_argument("--json", action="store_true")
 
     status = sub.add_parser("status")
-    status.add_argument("--bridge-host", default="tuna-bridge-usb")
+    status.add_argument("--bridge-host", default=_env_default("FCS_BRIDGE_HOST", "tuna-bridge-usb"), help="FCS Bridge host (default: $FCS_BRIDGE_HOST or tuna-bridge-usb)")
     status.add_argument("--timeout", type=float, default=8.0)
     status.add_argument("--json", action="store_true")
 
     blackbox = sub.add_parser("blackbox")
     blackbox_sub = blackbox.add_subparsers(dest="action", required=True)
     transfer = blackbox_sub.add_parser("transfer")
-    transfer.add_argument("--bridge-host", default="tuna-bridge-usb")
+    transfer.add_argument("--bridge-host", default=_env_default("FCS_BRIDGE_HOST", "tuna-bridge-usb"), help="FCS Bridge host (default: $FCS_BRIDGE_HOST or tuna-bridge-usb)")
     transfer.add_argument("--output", required=True)
     transfer.add_argument("--size", type=int)
     transfer.add_argument("--timeout", type=float, default=60.0)
@@ -85,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
     transfer.add_argument("--progress", action="store_true")
     transfer.add_argument("--json", action="store_true")
     erase = blackbox_sub.add_parser("erase")
-    erase.add_argument("--bridge-host", default="tuna-bridge-usb")
+    erase.add_argument("--bridge-host", default=_env_default("FCS_BRIDGE_HOST", "tuna-bridge-usb"), help="FCS Bridge host (default: $FCS_BRIDGE_HOST or tuna-bridge-usb)")
     erase.add_argument("--port", type=int, default=5761)
     erase.add_argument("--timeout", type=float, default=5.0)
     erase.add_argument("--confirm", required=True)
@@ -94,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     cli = sub.add_parser("cli")
     cli_sub = cli.add_subparsers(dest="action", required=True)
     write = cli_sub.add_parser("write")
-    write.add_argument("--bridge-host", default="tuna-bridge-usb")
+    write.add_argument("--bridge-host", default=_env_default("FCS_BRIDGE_HOST", "tuna-bridge-usb"), help="FCS Bridge host (default: $FCS_BRIDGE_HOST or tuna-bridge-usb)")
     write.add_argument("--port", type=int, default=5761)
     write.add_argument("--timeout", type=float, default=5.0)
     write_source = write.add_mutually_exclusive_group(required=True)

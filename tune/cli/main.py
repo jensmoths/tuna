@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,10 @@ from tune.services.operator_tasks import create_build_confirmation_task, create_
 from tune.services.resume import update_loop_resume_cursor
 from tune.services.tune_updates import approve_for_write, mark_applied, propose_tune_update, reject, record_application_failure
 from tune.storage import connect, init_db
+
+
+def _env_default(name: str, fallback: str) -> str:
+    return os.environ.get(name, fallback)
 
 
 def _row_to_dict(row: Any) -> dict[str, Any]:
@@ -206,7 +211,7 @@ def _loop_status_payload(conn: Any, loop_id: int) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Tune helper tool for Tuna state")
-    parser.add_argument("--db", default="tune.sqlite3")
+    parser.add_argument("--db", default=_env_default("TUNA_DB", "tune.sqlite3"), help="SQLite Tuna database path (default: $TUNA_DB or tune.sqlite3)")
     top = parser.add_subparsers(dest="area", required=True)
 
     db = top.add_parser("db")
@@ -248,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
     log_import.add_argument("path")
     log_import.add_argument("--build-id", type=int, required=True)
     log_import.add_argument("--loop-id", type=int)
-    log_import.add_argument("--storage-dir", default="tune-data/blackbox-logs")
+    log_import.add_argument("--storage-dir", default=_env_default("TUNA_LOG_STORAGE_DIR", "tune-data/blackbox-logs"), help="managed Blackbox Log storage directory (default: $TUNA_LOG_STORAGE_DIR or tune-data/blackbox-logs)")
     log_import.add_argument("--full-metadata", action="store_true", help="include full parsed Blackbox metadata in JSON output")
     log_import.add_argument("--metadata-json-file", help="write full parsed Blackbox metadata to a file")
     _add_json(log_import)
@@ -260,8 +265,8 @@ def main(argv: list[str] | None = None) -> int:
     analysis_sub = analysis.add_subparsers(dest="action", required=True)
     analysis_decode = analysis_sub.add_parser("decode")
     analysis_decode.add_argument("--log-id", type=int, required=True)
-    analysis_decode.add_argument("--output-dir", default="tune-data/decoded-logs")
-    analysis_decode.add_argument("--decoder-command", default="blackbox_decode")
+    analysis_decode.add_argument("--output-dir", default=_env_default("TUNA_DECODED_LOG_DIR", "tune-data/decoded-logs"), help="decoded CSV output directory (default: $TUNA_DECODED_LOG_DIR or tune-data/decoded-logs)")
+    analysis_decode.add_argument("--decoder-command", default=_env_default("TUNA_BLACKBOX_DECODER", "blackbox_decode"), help="Blackbox decoder command (default: $TUNA_BLACKBOX_DECODER or blackbox_decode)")
     _add_json(analysis_decode)
     analysis_analyze = analysis_sub.add_parser("analyze")
     analysis_analyze.add_argument("--log-id", type=int, required=True)
@@ -271,8 +276,8 @@ def main(argv: list[str] | None = None) -> int:
     _add_json(analysis_analyze)
     analysis_decode_analyze = analysis_sub.add_parser("decode-analyze")
     analysis_decode_analyze.add_argument("--log-id", type=int, required=True)
-    analysis_decode_analyze.add_argument("--output-dir", default="tune-data/decoded-logs")
-    analysis_decode_analyze.add_argument("--decoder-command", default="blackbox_decode")
+    analysis_decode_analyze.add_argument("--output-dir", default=_env_default("TUNA_DECODED_LOG_DIR", "tune-data/decoded-logs"), help="decoded CSV output directory (default: $TUNA_DECODED_LOG_DIR or tune-data/decoded-logs)")
+    analysis_decode_analyze.add_argument("--decoder-command", default=_env_default("TUNA_BLACKBOX_DECODER", "blackbox_decode"), help="Blackbox decoder command (default: $TUNA_BLACKBOX_DECODER or blackbox_decode)")
     analysis_decode_analyze.add_argument("--output-json-file", help="write the full analysis JSON to a file and keep CLI JSON concise")
     analysis_decode_analyze.add_argument("--full-json", action="store_true", help="print the full analysis JSON to stdout")
     _add_json(analysis_decode_analyze)
@@ -361,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
     task_fcs = task_sub.add_parser("request-fcs-connection")
     task_fcs.add_argument("--build-id", type=int)
     task_fcs.add_argument("--loop-id", type=int)
-    task_fcs.add_argument("--bridge-host", default="tuna-bridge-usb")
+    task_fcs.add_argument("--bridge-host", default=_env_default("FCS_BRIDGE_HOST", "tuna-bridge-usb"), help="FCS Bridge host to ask the Operator to restore (default: $FCS_BRIDGE_HOST or tuna-bridge-usb)")
     task_fcs.add_argument("--reason", default="FCS Bridge connection is required before the Tuning Agent can continue.")
     task_fcs.add_argument("--next-step", default="Restore the FC/Bridge connection in USB CDC/MSP mode.")
     _add_json(task_fcs)

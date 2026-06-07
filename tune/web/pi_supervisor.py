@@ -91,6 +91,7 @@ class PiRpcSupervisor:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                env=self._process_env(bridge_host),
                 text=True,
                 bufsize=1,
             )
@@ -153,7 +154,7 @@ class PiRpcSupervisor:
             return
         message = (
             f"Operator Task #{task_id} ({task['kind']}) has been resolved in the Operator Console. "
-            f"Inspect Tuna state with JSON tune commands, read the task response with `python3 -m tune --db {self.db_path} task show --task-id {task_id} --json`, and continue the Loop decision process."
+            f"Inspect Tuna state with JSON tune commands, read the task response with `python3 -m tune task show --task-id {task_id} --json`, and continue the Loop decision process."
         )
         for loop_id in loop_ids:
             self._append_debug_trace(loop_id, f"Operator Task #{task_id} resolved; notifying Tuning Agent")
@@ -382,6 +383,13 @@ class PiRpcSupervisor:
             else:
                 self._append_debug_trace(loop_id, f"sent Pi RPC command: {command.get('type')}")
 
+    def _process_env(self, bridge_host: str) -> dict[str, str]:
+        env = os.environ.copy()
+        env["TUNA_DB"] = str(self.db_path)
+        if bridge_host:
+            env["FCS_BRIDGE_HOST"] = bridge_host
+        return env
+
     def _read_stdout(self, loop_id: int, stdout: TextIO) -> None:
         for raw_line in stdout:
             line = raw_line.rstrip("\r\n")
@@ -507,7 +515,7 @@ class PiRpcSupervisor:
         bridge_line = bridge_host or "not provided"
         skill_text = self._tuning_agent_skill_text()
         fcs_step = (
-            f"2. If an FCS Bridge host is provided, query the connected FC with `PYTHONPATH=fcs-host python3 fcs-host/fcs.py inspect --bridge-host {bridge_host} --json` and compare that snapshot with the Loop Build snapshot."
+            f"2. If an FCS Bridge host is provided, query the connected FC with `PYTHONPATH=fcs-host python3 fcs-host/fcs.py inspect --json` and compare that snapshot with the Loop Build snapshot."
             if bridge_host
             else "2. No FCS Bridge host was provided; skip connected-FC inspection unless one appears in Tuna state."
         )
@@ -527,7 +535,7 @@ Tune Goal: {loop['tune_goal']}
 FCS Bridge host: {bridge_line}
 
 First:
-1. Inspect compact Tuna state with `python3 -m tune --db {self.db_path} loop status --loop-id {loop['id']} --json`.
+1. Inspect compact Tuna state with `python3 -m tune loop status --loop-id {loop['id']} --json`.
 {fcs_step}
 3. If FCS inspection fails, create a `request_fcs_connection` Operator Task. Only create a `confirm_build` Operator Task when a real FCS-derived FC snapshot is available and is missing, ambiguous, or does not clearly match the Loop Build.
 4. Confirm whether the Build and Tune Goal are sufficient.
@@ -557,7 +565,7 @@ Tune Goal: {loop['tune_goal']}
 FCS Bridge host: {bridge_line}
 
 First:
-1. Inspect compact Tuna state with `python3 -m tune --db {self.db_path} loop status --loop-id {loop['id']} --json`.
+1. Inspect compact Tuna state with `python3 -m tune loop status --loop-id {loop['id']} --json`.
 2. Check open and recently resolved Operator Tasks and Operator Notifications. If this continuation followed an Operator Task resolution, read that task with `task show --task-id <id> --json`.
 3. Resume the Loop decision process from durable Tuna state and the existing Pi session history.
 4. If a previous action was interrupted, verify state before retrying it.

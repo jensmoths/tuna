@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -17,6 +18,16 @@ class FcsCliTests(unittest.TestCase):
         with redirect_stdout(stdout):
             code = fcs_cli.main([*args, "--json"])
         return code, json.loads(stdout.getvalue())
+
+
+    def test_inspect_defaults_bridge_host_from_environment_variable(self):
+        payload = {"bridge_host": "env-bridge"}
+        with patch.dict(os.environ, {"FCS_BRIDGE_HOST": "env-bridge"}, clear=False):
+            with patch("fcs_cli._inspect", return_value=payload) as inspect:
+                code, result = self.run_cli_json_with_code("inspect")
+        self.assertEqual(code, 0)
+        self.assertEqual(result, payload)
+        inspect.assert_called_once_with("env-bridge", port=5761, timeout_seconds=2.5)
 
     def test_blackbox_transfer_delegates_to_fcs_download(self):
         with tempfile.TemporaryDirectory() as tmp:

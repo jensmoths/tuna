@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from flask import Flask, redirect, render_template, request, url_for
@@ -69,7 +70,7 @@ def create_app(db_path: str | Path) -> Flask:
     app.config["TUNE_DB"] = str(db_path)
     app.config.setdefault("TUNE_PI_COMMAND", "pi")
     app.config.setdefault("TUNE_WORKDIR", str(Path(db_path).resolve().parent))
-    app.config.setdefault("TUNE_DEFAULT_BRIDGE_HOST", "tuna-bridge-usb")
+    app.config.setdefault("TUNE_DEFAULT_BRIDGE_HOST", os.environ.get("FCS_BRIDGE_HOST", "tuna-bridge-usb"))
     app.config.setdefault("TUNE_DEFAULT_PI_MODEL", "gpt-5.4-mini")
     app.config.setdefault("TUNE_DEFAULT_THINKING_LEVEL", "medium")
     app.config.setdefault("TUNE_VERBOSE", False)

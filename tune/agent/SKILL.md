@@ -45,22 +45,22 @@ Use the project terms exactly:
 Use this checklist before broader discovery:
 
 1. Read compact state first:
-   `python3 -m tune --db tune.sqlite3 loop status --loop-id <id> --json`
+   `python3 -m tune loop status --loop-id <id> --json`
    Use full `loop context` only when the compact status is insufficient.
 2. If hardware is connected, inspect it through Tuna/FCS:
-   `PYTHONPATH=fcs-host python3 fcs-host/fcs.py inspect --bridge-host <host> --json`
+   `PYTHONPATH=fcs-host python3 fcs-host/fcs.py inspect --json`
 3. Read individual **Operator Task** responses with:
-   `python3 -m tune --db tune.sqlite3 task show --task-id <id> --json`
+   `python3 -m tune task show --task-id <id> --json`
    Avoid broad resolved task lists unless you do not know the task id.
 4. Create needed **Operator Tasks** with CLI subcommands, not Python snippets.
-5. Use `PYTHONPATH=fcs-host python3 fcs-host/fcs.py blackbox transfer ... --json` for **Post-flight Transfer**, then `python3 -m tune --db tune.sqlite3 log import ... --json`.
+5. Use `PYTHONPATH=fcs-host python3 fcs-host/fcs.py blackbox transfer ... --json` for **Post-flight Transfer**, then `python3 -m tune log import ... --json`.
 6. Import, decode, and analyze with concise commands:
-   `python3 -m tune --db tune.sqlite3 log import ... --json`
-   `python3 -m tune --db tune.sqlite3 analysis decode-analyze --log-id <id> --json`
+   `python3 -m tune log import ... --json`
+   `python3 -m tune analysis decode-analyze --log-id <id> --json`
 7. Inspect analysis with compact summaries:
-   `python3 -m tune --db tune.sqlite3 analysis summary --log-id <id> --json`
+   `python3 -m tune analysis summary --log-id <id> --json`
 8. Complete no-change **Tuning Iterations** atomically:
-   `python3 -m tune --db tune.sqlite3 iteration complete-with-diagnosis --iteration-id <id> --body ... --reason ... --json`
+   `python3 -m tune iteration complete-with-diagnosis --iteration-id <id> --body ... --reason ... --json`
 
 Do not read source code, repository docs, decoded CSV files, or full analysis
 JSON during normal **Loop** operation. Do not write ad hoc Python/Ruby/shell
@@ -102,13 +102,13 @@ Use FCS/MSP to extract what is available from the FC when hardware is connected:
 Then create a `confirm_build` **Operator Task** if human confirmation is needed. The Operator Console records whether the snapshot matches an existing **Build**, requires a new **Build**, or cannot be confirmed; the **Tuning Agent** decides the next workflow action and records the resulting **Build** with `tune`.
 
 ```bash
-python3 -m tune --db tune.sqlite3 task confirm-build --fc-snapshot-json '{"fc_variant":"BTFL"}' --json
+python3 -m tune task confirm-build --fc-snapshot-json '{"fc_variant":"BTFL"}' --json
 ```
 
 Example:
 
 ```bash
-python3 -m tune --db tune.sqlite3 build create "5-inch freestyle" --fc-snapshot-json '{"fc_variant":"BTFL"}' --operator-notes "Operator-confirmed Build" --json
+python3 -m tune build create "5-inch freestyle" --fc-snapshot-json '{"fc_variant":"BTFL"}' --operator-notes "Operator-confirmed Build" --json
 ```
 
 ### 2. Establish or confirm Loop
@@ -116,17 +116,17 @@ python3 -m tune --db tune.sqlite3 build create "5-inch freestyle" --fc-snapshot-
 Create a **Loop** only after the **Build** and **Tune Goal** are clear. If the **Tune Goal** is unclear, create a `request_tune_goal` **Operator Task** and use the response before creating the **Loop**.
 
 ```bash
-python3 -m tune --db tune.sqlite3 task request-tune-goal --build-id 1 --json
+python3 -m tune task request-tune-goal --build-id 1 --json
 ```
 
 ```bash
-python3 -m tune --db tune.sqlite3 loop create --build-id 1 --tune-goal "reduce propwash while preserving freestyle response" --json
+python3 -m tune loop create --build-id 1 --tune-goal "reduce propwash while preserving freestyle response" --json
 ```
 
 Check existing Loops when needed:
 
 ```bash
-python3 -m tune --db tune.sqlite3 loop list --build-id 1 --json
+python3 -m tune loop list --build-id 1 --json
 ```
 
 ### 3. Transfer Blackbox Logs through FCS
@@ -137,7 +137,6 @@ Preferred v1 workflow for ESP32-S3 USB-host **Bridge** MSC transfer: use `fcs bl
 
 ```bash
 PYTHONPATH=fcs-host python3 fcs-host/fcs.py blackbox transfer \
-  --bridge-host tuna-bridge-usb \
   --timeout 60 \
   --output transferred-logs/current-flight.bbl \
   --json
@@ -157,8 +156,9 @@ After successful transfer, ask the **Operator** to power-cycle/reset the FC back
 After transfer validation and host-side retention/import succeed, erase the transferred **Blackbox Log** copy from the FC through **FCS**. Do not erase FC storage before Tuna has a validated retained copy on the **Host Computer**. The erase command requires the FC to be back in USB CDC/MSP mode:
 
 ```bash
-PYTHONPATH=fcs-host python3 fcs-host/fcs_blackbox_erase.py tuna-bridge-usb \
-  --confirm erase-transferred-blackbox-log
+PYTHONPATH=fcs-host python3 fcs-host/fcs.py blackbox erase \
+  --confirm erase-transferred-blackbox-log \
+  --json
 ```
 
 Treat erase failure as a follow-up operational issue, not as a reason to discard the retained **Blackbox Log** on the **Host Computer**.
@@ -169,10 +169,9 @@ create a `request_fcs_connection` **Operator Task** or report the hardware
 limitation rather than attempting MSP download.
 
 ```bash
-python3 -m tune --db tune.sqlite3 task request-fcs-connection \
+python3 -m tune task request-fcs-connection \
   --build-id 1 \
   --loop-id 1 \
-  --bridge-host tuna-bridge-usb \
   --reason "FCS Bridge is unavailable for Post-flight Transfer" \
   --json
 ```
@@ -182,7 +181,7 @@ python3 -m tune --db tune.sqlite3 task request-fcs-connection \
 The **Tuning Agent** performs **Import** after transfer. Import records the file, hashes it, deduplicates it, associates it with the **Build**, and extracts metadata.
 
 ```bash
-python3 -m tune --db tune.sqlite3 log import transferred-logs/example.bbl --build-id 1 --json
+python3 -m tune log import transferred-logs/example.bbl --build-id 1 --json
 ```
 
 Use parsed metadata and warnings to decide whether a **Blackbox Log** is useful, deferred, or diagnostic-only. Do not discard files just because parsing fails.
@@ -195,7 +194,7 @@ For a resolved `request_flight_capture` **Operator Task**:
 When deeper analysis is needed, decode and analyze imported logs:
 
 ```bash
-python3 -m tune --db tune.sqlite3 analysis decode-analyze --log-id 1 --json
+python3 -m tune analysis decode-analyze --log-id 1 --json
 ```
 
 Do not run decode and analyze in parallel. If you need separate steps, wait for
@@ -212,13 +211,13 @@ Use chirp as an optional diagnostic capture, not a normal replacement for all fl
 Choose imported **Blackbox Logs** for the **Tuning Iteration**. You may defer logs or reuse prior logs as reference input.
 
 ```bash
-python3 -m tune --db tune.sqlite3 iteration create --loop-id 1 --log-id 1 --json
+python3 -m tune iteration create --loop-id 1 --log-id 1 --json
 ```
 
 Check for an open **Tuning Iteration**:
 
 ```bash
-python3 -m tune --db tune.sqlite3 iteration current --loop-id 1 --json
+python3 -m tune iteration current --loop-id 1 --json
 ```
 
 ### 6. Record Diagnosis
@@ -226,7 +225,7 @@ python3 -m tune --db tune.sqlite3 iteration current --loop-id 1 --json
 Record one **Diagnosis** for a successful **Tuning Iteration**. The **Diagnosis** should explain observations, evidence, uncertainty, and why change or no change is recommended.
 
 ```bash
-python3 -m tune --db tune.sqlite3 diagnosis record --iteration-id 1 --body "Observed pitch bounce-back after sharp inputs..." --confidence medium --evidence-json '{"logs":[1]}' --json
+python3 -m tune diagnosis record --iteration-id 1 --body "Observed pitch bounce-back after sharp inputs..." --confidence medium --evidence-json '{"logs":[1]}' --json
 ```
 
 ### 7. Propose Tune Update or no change
@@ -248,7 +247,7 @@ Bad:
 Record the proposal:
 
 ```bash
-python3 -m tune --db tune.sqlite3 update propose --iteration-id 1 --build-id 1 --settings-json '{"d_pitch":48}' --cli-text 'set d_pitch = 48' --json
+python3 -m tune update propose --iteration-id 1 --build-id 1 --settings-json '{"d_pitch":48}' --cli-text 'set d_pitch = 48' --json
 ```
 
 If recommending no change, record a **Diagnosis** explaining why and do not invent a **Tune Update**.
@@ -260,33 +259,34 @@ Do not apply a **Tune Update** without **Operator** approval.
 After approval, the Operator Console records `approved_pending_write`. Find approved writes with:
 
 ```bash
-python3 -m tune --db tune.sqlite3 update pending-writes --json
+python3 -m tune update pending-writes --json
 ```
 
 For each pending write, verify state and FC identity, perform FCS write-back, then record success:
 
 ```bash
-PYTHONPATH=fcs-host python3 fcs-host/fcs_write_cli.py tuna-bridge-usb \
+PYTHONPATH=fcs-host python3 fcs-host/fcs.py cli write \
   --cli-file approved-tune-update.cli \
-  --confirm write-fc-cli
+  --confirm write-fc-cli \
+  --json
 ```
 
 The confirmation string is intentionally explicit. Use this only for Operator-approved **Tune Updates** after verifying FC identity and current state.
 
 ```bash
-python3 -m tune --db tune.sqlite3 update apply --update-id 1 --json
+python3 -m tune update apply --update-id 1 --json
 ```
 
 or failure:
 
 ```bash
-python3 -m tune --db tune.sqlite3 update record-write-failure --update-id 1 --failure "Bridge connection failed" --json
+python3 -m tune update record-write-failure --update-id 1 --failure "Bridge connection failed" --json
 ```
 
 After rejection:
 
 ```bash
-python3 -m tune --db tune.sqlite3 update reject --update-id 1 --reason "Operator wants another confirmation flight" --json
+python3 -m tune update reject --update-id 1 --reason "Operator wants another confirmation flight" --json
 ```
 
 ## Query commands
@@ -294,11 +294,11 @@ python3 -m tune --db tune.sqlite3 update reject --update-id 1 --reason "Operator
 Use JSON output for agent-readable state:
 
 ```bash
-python3 -m tune --db tune.sqlite3 loop context --loop-id 1 --json
-python3 -m tune --db tune.sqlite3 status --json
-python3 -m tune --db tune.sqlite3 task list --status open --json
-python3 -m tune --db tune.sqlite3 task list --status resolved --limit 5 --json
-python3 -m tune --db tune.sqlite3 notification list --status open --json
+python3 -m tune loop context --loop-id 1 --json
+python3 -m tune status --json
+python3 -m tune task list --status open --json
+python3 -m tune task list --status resolved --limit 5 --json
+python3 -m tune notification list --status open --json
 ```
 
 ## Safety and quality checks

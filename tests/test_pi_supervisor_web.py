@@ -62,6 +62,9 @@ class PiSupervisorWebTests(unittest.TestCase):
         args = popen.call_args.args[0]
         self.assertEqual(args[:3], ["pi-test", "--mode", "rpc"])
         self.assertIn("--no-context-files", args)
+        env = popen.call_args.kwargs["env"]
+        self.assertEqual(env["TUNA_DB"], str(self.db_path))
+        self.assertEqual(env["FCS_BRIDGE_HOST"], "tuna-bridge-usb")
         self.assertIn("--no-skills", args)
         self.assertIn("--model", args)
         self.assertIn("openai-codex/gpt-5.4-mini", args)

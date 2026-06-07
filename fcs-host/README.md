@@ -29,6 +29,19 @@ This supports **Blackbox Log** discovery and transfer from FC dataflash. After a
 - `fcs_msc_raw_download.py` — raw Betaflight USB MSC transfer helper; trims leading padding before the Blackbox header
 - `tests/test_bridge_transport.py` — stdlib `unittest` contract tests using a local single-client fake Bridge
 
+
+## Common environment variables
+
+Set `FCS_BRIDGE_HOST` to avoid repeating `--bridge-host` on normal FCS commands:
+
+```bash
+export FCS_BRIDGE_HOST=tuna-bridge-usb
+PYTHONPATH=fcs-host python3 fcs-host/fcs.py inspect --json
+PYTHONPATH=fcs-host python3 fcs-host/fcs.py blackbox transfer --output transferred-logs/current-flight.bbl --json
+```
+
+Explicit `--bridge-host` arguments override `FCS_BRIDGE_HOST`.
+
 ## Run the tests
 
 ```bash
@@ -109,7 +122,7 @@ PYTHONPATH=fcs-host python3 fcs-host/fcs.py cli write \
   --json
 ```
 
-After success, the **Tuning Agent** records `python3 -m tune --db tune.sqlite3 update apply --update-id ... --json`; after failure it records `python3 -m tune --db tune.sqlite3 update record-write-failure --update-id ... --failure ... --json`.
+After success, the **Tuning Agent** records `python3 -m tune update apply --update-id ... --json`; after failure it records `python3 -m tune update record-write-failure --update-id ... --failure ... --json`.
 
 ## Download from Betaflight USB MSC raw storage
 
@@ -181,12 +194,12 @@ PYTHONPATH=fcs-host python3 fcs-host/fcs.py blackbox transfer --no-trigger-msc -
   written_bytes=306176
   starts_with_blackbox_header=true
 
-python3 -m tune --db tune.sqlite3 log import:
+python3 -m tune log import:
   log_id=2
   parse_status=readable
   firmware=Betaflight 2025.12.3-alpha (db7df6e48) AT32F435G
 
-python3 -m tune --db tune.sqlite3 analysis decode-analyze:
+python3 -m tune analysis decode-analyze:
   csv_path=tune-data/decoded-logs/log-2.csv
   analysis_id=3
   row_count=184
@@ -200,7 +213,7 @@ Follow-up hardware validation on 2026-06-06 cleared the remaining v1 FCS gates:
 
 ```text
 FCS write-back smoke:
-  command: fcs_write_cli.py tuna-bridge-usb --command "set d_pitch = 46" --confirm write-fc-cli
+  command: fcs.py cli write --command "set d_pitch = 46" --confirm write-fc-cli --json
   result: write ok
   transcript: FC entered CLI, accepted d_pitch set to 46, accepted save
   post-write MSP smoke: variant=BTFL version=25.12.3 msp_api=1.47
@@ -217,7 +230,7 @@ One-shot CDC/MSP -> MSC raw Post-flight Transfer:
 
 Erase after validated transfer/import:
   pre-erase storage: total_size=16777216 used_size=868352
-  command: fcs_blackbox_erase.py tuna-bridge-usb --confirm erase-transferred-blackbox-log
+  command: fcs.py blackbox erase --confirm erase-transferred-blackbox-log --json
   result: erase ok before_used_bytes=868352 after_used_bytes=0
   follow-up storage probe: total_size=16777216 used_size=0
 ```
@@ -252,7 +265,7 @@ Validated:
 - full 16 MiB MSC raw transfer succeeded as `transferred-logs/full-current-flight.bbl`, trimmed the Blackbox header at raw offset `562176`, produced a `16215040` byte `.bbl`, and was manually validated in Blackbox Explorer
 - production full-size MSC raw transfer with progress display, chunked range reads, resume sidecars, and per-chunk retry policy
 - partial real-log MSC raw transfer with one retry, `306176` byte trimmed `.bbl`, `log_id=2`, `analysis_id=3`
-- real FC write-back using `fcs_write_cli.py` with a no-op approved-value CLI command, followed by successful MSP smoke test
+- real FC write-back using `fcs cli write` with a no-op approved-value CLI command, followed by successful MSP smoke test
 - erasing transferred FC logs through FCS after successful validated host-side transfer/import, followed by storage probe showing `used_size=0`
 
 Not yet validated:

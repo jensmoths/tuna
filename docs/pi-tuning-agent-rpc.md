@@ -128,7 +128,7 @@ Tune Goal: reduce propwash while preserving freestyle response
 FCS Bridge host: tuna-bridge-usb
 
 First:
-1. Inspect Tuna state with `python3 -m tune --db tune.sqlite3 loop context --loop-id <id> --json` when a Loop exists, or concise JSON tune commands otherwise.
+1. Inspect Tuna state with `python3 -m tune loop context --loop-id <id> --json` when a Loop exists, or concise JSON tune commands otherwise.
 2. Confirm whether the Build and Tune Goal are sufficient.
 3. If needed, create Operator Tasks.
 4. If sufficient, create or resume the Loop.

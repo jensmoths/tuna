@@ -24,6 +24,17 @@ See `docs/domain-model.md` for canonical Tuna vocabulary and domain rules.
 - `tune log` is for retained/imported **Blackbox Log** artifacts on the **Host Computer**.
 - `tune analysis` is for decode/analyze outputs and analysis summaries derived from imported **Blackbox Logs**.
 
+
+Common CLI environment variables:
+
+- `TUNA_DB`: default SQLite Tuna database path for `python3 -m tune` when `--db` is omitted.
+- `FCS_BRIDGE_HOST`: default FCS Bridge host for `fcs` hardware commands and Tune Operator Task defaults when `--bridge-host` is omitted.
+- `TUNA_LOG_STORAGE_DIR`: default managed Host Computer storage directory for `tune log import`.
+- `TUNA_DECODED_LOG_DIR`: default decoded CSV output directory for `tune analysis decode` and `tune analysis decode-analyze`.
+- `TUNA_BLACKBOX_DECODER`: default Blackbox decoder command for `tune analysis decode` and `tune analysis decode-analyze`.
+
+Explicit CLI flags override environment defaults. The Operator Console supervisor exports `TUNA_DB` and, when available, `FCS_BRIDGE_HOST` to the Tuning Agent process so routine commands can omit those repeated options.
+
 ## Storage
 
 - Use SQLite for durable Tuna state/history.
