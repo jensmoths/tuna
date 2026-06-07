@@ -9,8 +9,6 @@ from typing import Any
 from tune.services.analysis import analyze_imported_log, decode_imported_log
 from tune.services.builds import create_build
 from tune.services.diagnoses import record_diagnosis
-from tune.services.fcs_transfer import read_bridge_status, transfer_blackbox_log_from_bridge
-from tune.services.fcs_probe import inspect_fcs
 from tune.services.iterations import complete_no_change, complete_no_change_with_diagnosis, create_iteration
 from tune.services.logs import import_blackbox_log
 from tune.services.loop_context import get_loop_context
@@ -114,44 +112,6 @@ def _write_analysis_file(path_text: str | None, payload: dict[str, Any]) -> str 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return str(output_path)
-
-
-def _transfer_error_payload(exc: BaseException, *, output_path: Path) -> dict[str, Any]:
-    message = str(exc)
-    lowered = message.lower()
-    if "msc raw read" in lowered:
-        stage = "msc_raw_download"
-        next_action = "Retry the same log transfer command; resume sidecars are kept next to the output file."
-    elif "msc raw mode not ready" in lowered:
-        stage = "wait_for_msc_raw"
-        next_action = "Verify the Bridge/FC mode, then retry log transfer; use --no-trigger-msc only if MSC raw is already ready."
-    elif "blackbox header" in lowered:
-        stage = "validate_transfer"
-        next_action = "Do not import this file; retry transfer with a correct size or inspect the retained partial artifact."
-    elif "--size is required" in lowered:
-        stage = "transfer_size"
-        next_action = "Reset/power-cycle the FC back to USB CDC/MSP mode so FCS can discover Blackbox Log used_size, or retry with an explicit --size override if MSC raw mode is already ready."
-    elif "used_size" in lowered or "no blackbox log bytes" in lowered or "storage is not ready" in lowered:
-        stage = "transfer_size"
-        next_action = "Verify the FC has a completed Blackbox Log in ready storage, then retry Post-flight Transfer."
-    elif "cdc/msp" in lowered or "bridge is not in msc" in lowered:
-        stage = "mode_check"
-        next_action = "Restore the FC/Bridge connection in USB CDC/MSP mode or MSC raw mode, then retry log transfer."
-    else:
-        stage = "bridge_status"
-        next_action = "Verify the Bridge is reachable and retry log transfer; create a request_fcs_connection Operator Task if it remains unavailable."
-    return {
-        "error": {
-            "kind": exc.__class__.__name__,
-            "message": message,
-            "failure_stage": stage,
-            "retryable": True,
-            "recommended_next_action": next_action,
-            "output_path": str(output_path),
-            "part_path": str(output_path.with_suffix(output_path.suffix + ".part")),
-            "state_path": str(output_path.with_suffix(output_path.suffix + ".state.json")),
-        }
-    }
 
 
 def _command_error_payload(exc: BaseException) -> dict[str, Any]:
@@ -292,54 +252,41 @@ def main(argv: list[str] | None = None) -> int:
     log_import.add_argument("--full-metadata", action="store_true", help="include full parsed Blackbox metadata in JSON output")
     log_import.add_argument("--metadata-json-file", help="write full parsed Blackbox metadata to a file")
     _add_json(log_import)
-    log_transfer = log_sub.add_parser("transfer")
-    log_transfer.add_argument("--bridge-host", default="tuna-bridge-usb")
-    log_transfer.add_argument("--loop-id", type=int)
-    log_transfer.add_argument("--output", required=True)
-    log_transfer.add_argument("--size", type=int, help="raw MSC bytes to transfer; defaults to FC-reported Blackbox Log used_size before MSC mode")
-    log_transfer.add_argument("--timeout", type=float, default=60.0)
-    log_transfer.add_argument("--chunk-size", type=int, default=1024 * 1024, help="raw MSC bytes to request per Bridge range read")
-    log_transfer.add_argument("--max-attempts", type=int, default=3, help="retry attempts for each raw MSC range read")
-    log_transfer.add_argument("--no-trigger-msc", action="store_true", help="require the Bridge to already be in MSC raw mode")
-    log_transfer.add_argument("--no-resume", action="store_true", help="do not use .part/.state.json resume sidecars")
-    log_transfer.add_argument("--progress", action="store_true", help="print transfer progress to stderr")
-    _add_json(log_transfer)
-    log_decode = log_sub.add_parser("decode")
-    log_decode.add_argument("--log-id", type=int, required=True)
-    log_decode.add_argument("--output-dir", default="tune-data/decoded-logs")
-    log_decode.add_argument("--decoder-command", default="blackbox_decode")
-    _add_json(log_decode)
-    log_analyze = log_sub.add_parser("analyze")
-    log_analyze.add_argument("--log-id", type=int, required=True)
-    log_analyze.add_argument("--csv-path")
-    log_analyze.add_argument("--output-json-file", help="write the full analysis JSON to a file and keep CLI JSON concise")
-    log_analyze.add_argument("--full-json", action="store_true", help="print the full analysis JSON to stdout")
-    _add_json(log_analyze)
-    log_decode_analyze = log_sub.add_parser("decode-analyze")
-    log_decode_analyze.add_argument("--log-id", type=int, required=True)
-    log_decode_analyze.add_argument("--output-dir", default="tune-data/decoded-logs")
-    log_decode_analyze.add_argument("--decoder-command", default="blackbox_decode")
-    log_decode_analyze.add_argument("--output-json-file", help="write the full analysis JSON to a file and keep CLI JSON concise")
-    log_decode_analyze.add_argument("--full-json", action="store_true", help="print the full analysis JSON to stdout")
-    _add_json(log_decode_analyze)
-    log_transfer_status = log_sub.add_parser("transfer-status")
-    log_transfer_status.add_argument("--bridge-host", default="tuna-bridge-usb")
-    log_transfer_status.add_argument("--timeout", type=float, default=8.0)
-    _add_json(log_transfer_status)
-    segment_rows = log_sub.add_parser("segment-rows")
-    segment_rows.add_argument("--log-id", type=int, required=True)
-    segment_rows.add_argument("--segment-kind", required=True, choices=["high_rate", "throttle_punch", "chirp"])
-    segment_rows.add_argument("--segment-index", type=int, required=True)
-    segment_rows.add_argument("--fields", help="comma-separated decoded CSV fields to return")
-    segment_rows.add_argument("--pad-rows", type=int, default=0)
-    segment_rows.add_argument("--max-rows", type=int, default=500)
-    _add_json(segment_rows)
-    log_analysis_summary = log_sub.add_parser("analysis-summary")
-    log_analysis_summary.add_argument("--log-id", type=int, required=True)
-    _add_json(log_analysis_summary)
     log_list = log_sub.add_parser("list")
     log_list.add_argument("--build-id", type=int)
     _add_json(log_list)
+
+    analysis = top.add_parser("analysis")
+    analysis_sub = analysis.add_subparsers(dest="action", required=True)
+    analysis_decode = analysis_sub.add_parser("decode")
+    analysis_decode.add_argument("--log-id", type=int, required=True)
+    analysis_decode.add_argument("--output-dir", default="tune-data/decoded-logs")
+    analysis_decode.add_argument("--decoder-command", default="blackbox_decode")
+    _add_json(analysis_decode)
+    analysis_analyze = analysis_sub.add_parser("analyze")
+    analysis_analyze.add_argument("--log-id", type=int, required=True)
+    analysis_analyze.add_argument("--csv-path")
+    analysis_analyze.add_argument("--output-json-file", help="write the full analysis JSON to a file and keep CLI JSON concise")
+    analysis_analyze.add_argument("--full-json", action="store_true", help="print the full analysis JSON to stdout")
+    _add_json(analysis_analyze)
+    analysis_decode_analyze = analysis_sub.add_parser("decode-analyze")
+    analysis_decode_analyze.add_argument("--log-id", type=int, required=True)
+    analysis_decode_analyze.add_argument("--output-dir", default="tune-data/decoded-logs")
+    analysis_decode_analyze.add_argument("--decoder-command", default="blackbox_decode")
+    analysis_decode_analyze.add_argument("--output-json-file", help="write the full analysis JSON to a file and keep CLI JSON concise")
+    analysis_decode_analyze.add_argument("--full-json", action="store_true", help="print the full analysis JSON to stdout")
+    _add_json(analysis_decode_analyze)
+    analysis_summary = analysis_sub.add_parser("summary")
+    analysis_summary.add_argument("--log-id", type=int, required=True)
+    _add_json(analysis_summary)
+    analysis_segment_rows = analysis_sub.add_parser("segment-rows")
+    analysis_segment_rows.add_argument("--log-id", type=int, required=True)
+    analysis_segment_rows.add_argument("--segment-kind", required=True, choices=["high_rate", "throttle_punch", "chirp"])
+    analysis_segment_rows.add_argument("--segment-index", type=int, required=True)
+    analysis_segment_rows.add_argument("--fields", help="comma-separated decoded CSV fields to return")
+    analysis_segment_rows.add_argument("--pad-rows", type=int, default=0)
+    analysis_segment_rows.add_argument("--max-rows", type=int, default=500)
+    _add_json(analysis_segment_rows)
 
     iteration = top.add_parser("iteration")
     iteration_sub = iteration.add_subparsers(dest="action", required=True)
@@ -435,7 +382,7 @@ def main(argv: list[str] | None = None) -> int:
     task_show.add_argument("--task-id", type=int, required=True)
     _add_json(task_show)
 
-    notify = top.add_parser("notify")
+    notify = top.add_parser("notification", aliases=["notify"])
     notify_sub = notify.add_subparsers(dest="action", required=True)
     notify_blackbox = notify_sub.add_parser("blackbox-config-changed")
     notify_blackbox.add_argument("--build-id", type=int)
@@ -449,14 +396,6 @@ def main(argv: list[str] | None = None) -> int:
     notify_list.add_argument("--status", choices=("open", "acknowledged", "all"), default="all")
     notify_list.add_argument("--limit", type=int)
     _add_json(notify_list)
-
-    fcs = top.add_parser("fcs")
-    fcs_sub = fcs.add_subparsers(dest="action", required=True)
-    fcs_inspect = fcs_sub.add_parser("inspect")
-    fcs_inspect.add_argument("--bridge-host", default="tuna-bridge-usb")
-    fcs_inspect.add_argument("--port", type=int, default=5761)
-    fcs_inspect.add_argument("--timeout", type=float, default=2.5)
-    _add_json(fcs_inspect)
 
     web = top.add_parser("web")
     web.add_argument("--host", default="127.0.0.1")
@@ -544,57 +483,14 @@ def main(argv: list[str] | None = None) -> int:
             last_import={"log_id": log_id, "path": payload["managed_path"], "parse_status": payload["parse_status"]},
         )
         _emit(payload, args.json)
-    elif args.area == "log" and args.action == "transfer":
-        def progress(event: dict[str, object]) -> None:
-            print(
-                f"raw={event['raw_bytes_downloaded']}/{event['requested_size']} "
-                f"written={event['written_bytes']} retries={event['retries']}",
-                file=sys.stderr,
-            )
-
-        output_path = Path(args.output)
-        try:
-            payload = transfer_blackbox_log_from_bridge(
-                args.bridge_host,
-                output_path=output_path,
-                size=args.size,
-                trigger_msc=not args.no_trigger_msc,
-                timeout_seconds=args.timeout,
-                resume=not args.no_resume,
-                chunk_size=args.chunk_size,
-                max_attempts=args.max_attempts,
-                progress=progress if args.progress else None,
-            )
-        except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
-            payload = _transfer_error_payload(exc, output_path=output_path)
-            if args.json:
-                _print_json(payload)
-            else:
-                print(payload["error"]["message"], file=sys.stderr)
-            update_loop_resume_cursor(conn, args.loop_id, last_transfer_error=payload["error"])
-            return 1
-        update_loop_resume_cursor(
-            conn,
-            args.loop_id,
-            last_transfer={
-                "output_path": payload["download"]["output_path"],
-                "written_bytes": payload["download"]["written_bytes"],
-                "starts_with_blackbox_header": payload["download"]["starts_with_blackbox_header"],
-            },
-            last_transfer_error={},
-        )
-        if args.json:
-            _print_json(payload)
-        else:
-            print(payload["download"]["output_path"])
-    elif args.area == "log" and args.action == "decode":
+    elif args.area == "analysis" and args.action == "decode":
         try:
             payload = decode_imported_log(conn, args.log_id, output_dir=args.output_dir, decoder_command=args.decoder_command)
         except (OSError, RuntimeError, ValueError) as exc:
             _emit_command_error(exc, args.json)
             return 1
         _emit(payload, args.json)
-    elif args.area == "log" and args.action == "analyze":
+    elif args.area == "analysis" and args.action == "analyze":
         try:
             payload = analyze_imported_log(conn, args.log_id, csv_path=args.csv_path)
         except (OSError, RuntimeError, ValueError) as exc:
@@ -609,7 +505,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(output_json_file)
             else:
                 print(payload["duration_seconds"])
-    elif args.area == "log" and args.action == "decode-analyze":
+    elif args.area == "analysis" and args.action == "decode-analyze":
         try:
             decoded = decode_imported_log(conn, args.log_id, output_dir=args.output_dir, decoder_command=args.decoder_command)
             payload = analyze_imported_log(conn, args.log_id, csv_path=decoded["csv_path"])
@@ -628,24 +524,7 @@ def main(argv: list[str] | None = None) -> int:
             _print_json(payload if args.full_json else concise_payload)
         else:
             print(decoded["csv_path"])
-    elif args.area == "log" and args.action == "transfer-status":
-        try:
-            status_payload = read_bridge_status(args.bridge_host, timeout_seconds=args.timeout)
-            payload = {
-                "bridge_host": args.bridge_host,
-                "status_text": status_payload.text,
-                "usb_cdc_connected": status_payload.usb_cdc_connected,
-                "msc_raw_ready": status_payload.msc_raw_ready,
-            }
-        except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
-            payload = {"error": {"kind": exc.__class__.__name__, "message": str(exc), "retryable": True}}
-            if args.json:
-                _print_json(payload)
-            else:
-                print(str(exc), file=sys.stderr)
-            return 1
-        _print_json(payload)
-    elif args.area == "log" and args.action == "segment-rows":
+    elif args.area == "analysis" and args.action == "segment-rows":
         fields = [field.strip() for field in args.fields.split(",")] if args.fields else None
         try:
             payload = get_segment_rows(
@@ -664,7 +543,7 @@ def main(argv: list[str] | None = None) -> int:
             _print_json(payload)
         else:
             print(len(payload["rows"]))
-    elif args.area == "log" and args.action == "analysis-summary":
+    elif args.area == "analysis" and args.action == "summary":
         try:
             payload = _analysis_summary_payload(conn, args.log_id)
         except (json.JSONDecodeError, ValueError) as exc:
@@ -800,7 +679,7 @@ def main(argv: list[str] | None = None) -> int:
             _emit_command_error(exc, args.json)
             return 1
         _print_json(_task_payload(row))
-    elif args.area == "notify" and args.action == "blackbox-config-changed":
+    elif args.area in ("notify", "notification") and args.action == "blackbox-config-changed":
         notification_id = create_blackbox_config_notification(
             conn,
             build_id=args.build_id,
@@ -811,7 +690,7 @@ def main(argv: list[str] | None = None) -> int:
             impact=args.impact,
         )
         _emit({"notification_id": notification_id, "kind": "blackbox_config_changed"}, args.json)
-    elif args.area == "notify" and args.action == "list":
+    elif args.area in ("notify", "notification") and args.action == "list":
         sql = "SELECT * FROM operator_notifications"
         params: list[Any] = []
         if args.status != "all":
@@ -822,17 +701,6 @@ def main(argv: list[str] | None = None) -> int:
             sql += " LIMIT ?"
             params.append(args.limit)
         _print_json([_notification_payload(row) for row in conn.execute(sql, tuple(params))])
-    elif args.area == "fcs" and args.action == "inspect":
-        try:
-            payload = inspect_fcs(args.bridge_host, port=args.port, timeout_seconds=args.timeout)
-        except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
-            payload = {"error": {"kind": exc.__class__.__name__, "message": str(exc), "retryable": True}}
-            if args.json:
-                _print_json(payload)
-            else:
-                print(str(exc), file=sys.stderr)
-            return 1
-        _print_json(payload)
     elif args.area == "web":
         from tune.web.app import create_app
         app = create_app(args.db)

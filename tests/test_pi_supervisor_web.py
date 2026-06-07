@@ -72,7 +72,7 @@ class PiSupervisorWebTests(unittest.TestCase):
         self.assertIn('"type": "prompt"', sent)
         self.assertIn("FCS Bridge host: tuna-bridge-usb", sent)
         self.assertIn("loop status", sent)
-        self.assertIn("fcs inspect", sent)
+        self.assertIn("fcs.py inspect", sent)
         self.assertIn("do not read source code or repository docs", sent)
         self.assertIn("Injected Tuna Tuning Agent operating instructions", sent)
         self.assertIn("# Tuna Tuning Agent", sent)
@@ -268,21 +268,21 @@ class PiSupervisorWebTests(unittest.TestCase):
 
         supervisor._append_debug_trace(loop_id, supervisor._trace_for_event({
             "type": "tool_execution_start",
-            "args": {"cmd": "python3 -m tune --db tune.sqlite3 log analyze --log-id 1 --json"},
+            "args": {"cmd": "python3 -m tune --db tune.sqlite3 analysis analyze --log-id 1 --json"},
         }))
         supervisor._handle_event(loop_id, {
             "type": "tool_execution_start",
-            "args": {"cmd": "python3 -m tune --db tune.sqlite3 log analyze --log-id 1 --json"},
+            "args": {"cmd": "python3 -m tune --db tune.sqlite3 analysis analyze --log-id 1 --json"},
         })
 
         session = self.conn.execute("SELECT status, debug_trace FROM tuning_agent_sessions WHERE loop_id = ?", (loop_id,)).fetchone()
         self.assertEqual(session["status"], "Analyzing Blackbox Log")
-        self.assertIn("tool start: python3 -m tune --db tune.sqlite3 log analyze", session["debug_trace"])
+        self.assertIn("tool start: python3 -m tune --db tune.sqlite3 analysis analyze", session["debug_trace"])
 
         page = app.test_client().get(f"/loops/{loop_id}")
         self.assertIn(b"Analyzing Blackbox Log", page.data)
         self.assertIn(b"trace-tool", page.data)
-        self.assertIn(b"tool start: python3 -m tune --db tune.sqlite3 log analyze", page.data)
+        self.assertIn(b"tool start: python3 -m tune --db tune.sqlite3 analysis analyze", page.data)
 
     def test_pi_rpc_streaming_updates_are_not_logged_but_message_end_is(self):
         build_id = create_build(self.conn, "5 inch")

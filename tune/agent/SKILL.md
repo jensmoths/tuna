@@ -48,17 +48,17 @@ Use this checklist before broader discovery:
    `python3 -m tune --db tune.sqlite3 loop status --loop-id <id> --json`
    Use full `loop context` only when the compact status is insufficient.
 2. If hardware is connected, inspect it through Tuna/FCS:
-   `python3 -m tune --db tune.sqlite3 fcs inspect --bridge-host <host> --json`
+   `PYTHONPATH=fcs-host python3 fcs-host/fcs.py inspect --bridge-host <host> --json`
 3. Read individual **Operator Task** responses with:
    `python3 -m tune --db tune.sqlite3 task show --task-id <id> --json`
    Avoid broad resolved task lists unless you do not know the task id.
 4. Create needed **Operator Tasks** with CLI subcommands, not Python snippets.
-5. Use `python3 -m tune --db tune.sqlite3 log transfer ... --json` for **Post-flight Transfer**.
+5. Use `PYTHONPATH=fcs-host python3 fcs-host/fcs.py blackbox transfer ... --json` for **Post-flight Transfer**, then `python3 -m tune --db tune.sqlite3 log import ... --json`.
 6. Import, decode, and analyze with concise commands:
    `python3 -m tune --db tune.sqlite3 log import ... --json`
-   `python3 -m tune --db tune.sqlite3 log decode-analyze --log-id <id> --json`
+   `python3 -m tune --db tune.sqlite3 analysis decode-analyze --log-id <id> --json`
 7. Inspect analysis with compact summaries:
-   `python3 -m tune --db tune.sqlite3 log analysis-summary --log-id <id> --json`
+   `python3 -m tune --db tune.sqlite3 analysis summary --log-id <id> --json`
 8. Complete no-change **Tuning Iterations** atomically:
    `python3 -m tune --db tune.sqlite3 iteration complete-with-diagnosis --iteration-id <id> --body ... --reason ... --json`
 
@@ -133,17 +133,17 @@ python3 -m tune --db tune.sqlite3 loop list --build-id 1 --json
 
 Use FCS tools for **Post-flight Transfer** from FC/Bridge to the **Host Computer**. Do not use raw Bridge/protocol access unless specifically debugging FCS/Bridge behavior.
 
-Preferred v1 workflow for ESP32-S3 USB-host **Bridge** MSC transfer: use `tune log transfer`. The CLI performs Bridge/FC mode validation, triggers MSC mode when needed, prefers the actual mounted Betaflight `.bbl` file when available, falls back to raw MSC download with resume sidecars, trims leading padding before the Blackbox header for raw fallback, and validates that the resulting file starts with `H Product:Blackbox`.
+Preferred v1 workflow for ESP32-S3 USB-host **Bridge** MSC transfer: use `fcs blackbox transfer`. The FCS CLI performs Bridge/FC mode validation, triggers MSC mode when needed, prefers the actual mounted Betaflight `.bbl` file when available, falls back to raw MSC download with resume sidecars, trims leading padding before the Blackbox header for raw fallback, and validates that the resulting file starts with `H Product:Blackbox`. Then use `tune log import` to record the retained Host Computer artifact in Tuna state.
 
 ```bash
-python3 -m tune --db tune.sqlite3 log transfer \
+PYTHONPATH=fcs-host python3 fcs-host/fcs.py blackbox transfer \
   --bridge-host tuna-bridge-usb \
   --timeout 60 \
   --output transferred-logs/current-flight.bbl \
   --json
 ```
 
-Use a stable file name under `transferred-logs/`. When starting from USB CDC/MSP mode, omit `--size`; `tune log transfer` discovers the FC-reported Blackbox storage `used_size` before triggering MSC mode. Use `--size` only as an override/debug escape hatch, such as when the Bridge is already in MSC raw mode and MSP storage discovery is unavailable. If the transfer times out or resets, repeat the same command; do not delete the `.part` or `.state.json` files unless intentionally starting over.
+Use a stable file name under `transferred-logs/`. When starting from USB CDC/MSP mode, omit `--size`; `fcs blackbox transfer` discovers the FC-reported Blackbox storage `used_size` before triggering MSC mode. Use `--size` only as an override/debug escape hatch, such as when the Bridge is already in MSC raw mode and MSP storage discovery is unavailable. If the transfer times out or resets, repeat the same command; do not delete the `.part` or `.state.json` files unless intentionally starting over.
 
 Required success evidence in JSON:
 
@@ -195,11 +195,11 @@ For a resolved `request_flight_capture` **Operator Task**:
 When deeper analysis is needed, decode and analyze imported logs:
 
 ```bash
-python3 -m tune --db tune.sqlite3 log decode-analyze --log-id 1 --json
+python3 -m tune --db tune.sqlite3 analysis decode-analyze --log-id 1 --json
 ```
 
 Do not run decode and analyze in parallel. If you need separate steps, wait for
-`log decode` to finish before `log analyze`.
+`analysis decode` to finish before `analysis analyze`.
 
 If `blackbox_decode` is not installed, report that dependency clearly and fall back to available import metadata only.
 
@@ -298,7 +298,7 @@ python3 -m tune --db tune.sqlite3 loop context --loop-id 1 --json
 python3 -m tune --db tune.sqlite3 status --json
 python3 -m tune --db tune.sqlite3 task list --status open --json
 python3 -m tune --db tune.sqlite3 task list --status resolved --limit 5 --json
-python3 -m tune --db tune.sqlite3 notify list --status open --json
+python3 -m tune --db tune.sqlite3 notification list --status open --json
 ```
 
 ## Safety and quality checks

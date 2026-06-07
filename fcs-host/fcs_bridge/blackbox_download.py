@@ -127,10 +127,18 @@ def _write_resume_state(output_path: Path, raw_bytes_downloaded: int, header_off
 def discover_blackbox_transfer_size(host: str, *, timeout_seconds: float = 8.0) -> int:
     """Return FC-reported used Blackbox Log storage bytes through FCS/MSP."""
 
-    from tune.services.fcs_probe import inspect_fcs
+    from .bridge_transport import BridgeTransport
+    from .fc_discovery import discover_fc_capabilities
+    from .msp_client import MspClient
 
-    payload = inspect_fcs(host, timeout_seconds=timeout_seconds)
-    storage = payload["blackbox_storage"]
+    with BridgeTransport(host, 5761, timeout_seconds=timeout_seconds) as transport:
+        capabilities = discover_fc_capabilities(MspClient(transport), timeout_seconds=timeout_seconds)
+    storage = {
+        "dataflash_available": capabilities.blackbox_storage.dataflash_available,
+        "dataflash_supported": capabilities.blackbox_storage.dataflash_supported,
+        "dataflash_ready": capabilities.blackbox_storage.dataflash_ready,
+        "used_size": capabilities.blackbox_storage.used_size,
+    }
     if not storage["dataflash_available"] or not storage["dataflash_supported"] or not storage["dataflash_ready"]:
         raise RuntimeError(f"Blackbox Log storage is not ready for transfer size discovery: {storage}")
     used_size = int(storage["used_size"])

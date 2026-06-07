@@ -14,11 +14,13 @@ This supports **Blackbox Log** discovery and transfer from FC dataflash. After a
 
 ## Files
 
+- `fcs.py` / `fcs_cli.py` — first-class JSON CLI for FC/Bridge hardware operations
 - `fcs_bridge/bridge_transport.py` — host-side Bridge TCP transport that owns connect/disconnect lifecycle
 - `fcs_bridge/msp.py` — MSP v1/v2 frame helpers and Betaflight dataflash parsers
 - `fcs_bridge/msp_client.py` — reusable synchronous MSP client
 - `fcs_bridge/fc_discovery.py` — FC identity and Blackbox storage discovery
 - `fcs_bridge/blackbox_transfer.py` — MSP erase helper for post-import FC Blackbox storage cleanup
+- `fcs_bridge/blackbox_download.py` — MSC file/raw Blackbox Log transfer helpers
 - `fcs_connectivity_tracer.py` — CLI smoke tracer against a real Bridge
 - `fc_passthrough_smoke.py` — MSP passthrough smoke test against a real FC
 - `fcs_blackbox_storage_probe.py` — read-only Blackbox storage discovery
@@ -69,7 +71,7 @@ msp fc-version ok version=4.5.2
 This read-only probe asks the flight controller what **Blackbox Log** storage exists. It does not transfer or delete logs.
 
 ```bash
-PYTHONPATH=fcs-host python3 fcs-host/fcs_blackbox_storage_probe.py tuna-bridge
+PYTHONPATH=fcs-host python3 fcs-host/fcs.py inspect --bridge-host tuna-bridge --json
 ```
 
 ## Erase transferred FC Blackbox Log storage
@@ -77,8 +79,10 @@ PYTHONPATH=fcs-host python3 fcs-host/fcs_blackbox_storage_probe.py tuna-bridge
 Only erase after Tuna has a validated retained **Blackbox Log** on the **Host Computer** and **Import** succeeded. The FC must be in USB CDC/MSP mode, so after MSC raw transfer the **Operator** must power-cycle/reset the FC before this command can run.
 
 ```bash
-PYTHONPATH=fcs-host python3 fcs-host/fcs_blackbox_erase.py tuna-bridge-usb \
-  --confirm erase-transferred-blackbox-log
+PYTHONPATH=fcs-host python3 fcs-host/fcs.py blackbox erase \
+  --bridge-host tuna-bridge-usb \
+  --confirm erase-transferred-blackbox-log \
+  --json
 ```
 
 The confirmation string is intentionally explicit because this erases FC Blackbox storage.
@@ -88,17 +92,21 @@ The confirmation string is intentionally explicit because this erases FC Blackbo
 Only use this after the Operator Console has approved a **Tune Update** and the **Tuning Agent** has verified state and FC identity. The helper sends Betaflight CLI text through FCS and appends `save` when needed.
 
 ```bash
-PYTHONPATH=fcs-host python3 fcs-host/fcs_write_cli.py tuna-bridge-usb \
+PYTHONPATH=fcs-host python3 fcs-host/fcs.py cli write \
+  --bridge-host tuna-bridge-usb \
   --command "set d_pitch = 48" \
-  --confirm write-fc-cli
+  --confirm write-fc-cli \
+  --json
 ```
 
 For generated CLI artifacts:
 
 ```bash
-PYTHONPATH=fcs-host python3 fcs-host/fcs_write_cli.py tuna-bridge-usb \
+PYTHONPATH=fcs-host python3 fcs-host/fcs.py cli write \
+  --bridge-host tuna-bridge-usb \
   --cli-file approved-tune-update.cli \
-  --confirm write-fc-cli
+  --confirm write-fc-cli \
+  --json
 ```
 
 After success, the **Tuning Agent** records `python3 -m tune --db tune.sqlite3 update apply --update-id ... --json`; after failure it records `python3 -m tune --db tune.sqlite3 update record-write-failure --update-id ... --failure ... --json`.
@@ -113,10 +121,10 @@ Once the FC is in MSC mode and `STATUS_VERBOSE` reports `msc_raw=1`, download a 
 PYTHONPATH=fcs-host python3 fcs-host/fcs_msc_raw_download.py tuna-bridge --size 1048576
 ```
 
-For normal Tuna workflows, prefer the Tuning Agent-facing `python3 -m tune` command because it validates mode state, can trigger MSC mode, prefers a mounted MSC `.bbl` file when available, falls back to raw download with resume, trims leading padding, and verifies the Blackbox header:
+For normal Tuna workflows, use the FCS JSON CLI for Post-flight Transfer; it validates mode state, can trigger MSC mode, prefers a mounted MSC `.bbl` file when available, falls back to raw download with resume, trims leading padding, and verifies the Blackbox header:
 
 ```bash
-python3 -m tune --db tune.sqlite3 log transfer \
+PYTHONPATH=fcs-host python3 fcs-host/fcs.py blackbox transfer \
   --bridge-host tuna-bridge-usb \
   --timeout 60 \
   --output transferred-logs/current-flight.bbl \
@@ -166,7 +174,7 @@ Blackbox storage before transfer:
   total_size=16777216
   used_size=868352
 
-python3 -m tune --db tune.sqlite3 log transfer --no-trigger-msc --size 868352 --chunk-size 262144:
+PYTHONPATH=fcs-host python3 fcs-host/fcs.py blackbox transfer --no-trigger-msc --size 868352 --chunk-size 262144:
   raw_bytes_downloaded=868352
   retries=1
   header_offset=562176
@@ -178,7 +186,7 @@ python3 -m tune --db tune.sqlite3 log import:
   parse_status=readable
   firmware=Betaflight 2025.12.3-alpha (db7df6e48) AT32F435G
 
-python3 -m tune --db tune.sqlite3 log decode-analyze:
+python3 -m tune --db tune.sqlite3 analysis decode-analyze:
   csv_path=tune-data/decoded-logs/log-2.csv
   analysis_id=3
   row_count=184
@@ -186,7 +194,7 @@ python3 -m tune --db tune.sqlite3 log decode-analyze:
   usable=false; warning=Blackbox Log duration is short for tuning analysis
 ```
 
-During that run, an initial `python3 -m tune --db tune.sqlite3 log transfer` from USB CDC/MSP mode successfully caused the FC to re-enumerate into MSC raw mode, but the command timed out while polling status. Re-running `python3 -m tune --db tune.sqlite3 log transfer --no-trigger-msc` completed the **Post-flight Transfer** from the already-ready MSC raw state. After transfer, the FC remained in MSC mode and required Operator reset/power-cycle before further USB CDC/MSP operations.
+During that run, an initial `PYTHONPATH=fcs-host python3 fcs-host/fcs.py blackbox transfer` from USB CDC/MSP mode successfully caused the FC to re-enumerate into MSC raw mode, but the command timed out while polling status. Re-running `PYTHONPATH=fcs-host python3 fcs-host/fcs.py blackbox transfer --no-trigger-msc` completed the **Post-flight Transfer** from the already-ready MSC raw state. After transfer, the FC remained in MSC mode and required Operator reset/power-cycle before further USB CDC/MSP operations.
 
 Follow-up hardware validation on 2026-06-06 cleared the remaining v1 FCS gates:
 
@@ -229,9 +237,9 @@ Validated:
 - ESP32-S3 USB MSC raw path to Betaflight FC `2e3c:5720`
 - `STATUS_VERBOSE` full diagnostics without truncating MSC sector fields
 - `MSC_GET_RAW [bytes]` and `MSC_GET_RAW [offset] [bytes]` raw range reads
-- `tune log transfer` end-to-end validation while FC is already in MSC raw mode
-- `tune log transfer` of a real FC **Blackbox Log** from MSC raw mode, followed by Tuna **Import**, decode, and analysis
-- `tune log transfer` one-shot from USB CDC/MSP mode through automatic `msc` trigger into MSC raw transfer
+- `fcs blackbox transfer` end-to-end validation while FC is already in MSC raw mode
+- `fcs blackbox transfer` of a real FC **Blackbox Log** from MSC raw mode, followed by Tuna **Import**, decode, and analysis
+- `fcs blackbox transfer` one-shot from USB CDC/MSP mode through automatic `msc` trigger into MSC raw transfer
 - Blackbox dataflash summary:
   - `dataflash_available=1`
   - `dataflash_supported=1`

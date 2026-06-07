@@ -11,7 +11,7 @@ See `docs/domain-model.md` for canonical Tuna vocabulary and domain rules.
 - The web **Operator Console** process owns the Pi RPC supervisor.
 - The **Operator Console** shows status only by default, not the full Pi
   transcript or raw tool stream.
-- v1 uses Pi's normal tools to run `tune --json` commands and FCS commands.
+- v1 uses Pi's normal tools to run `tune --json` commands for Tuna state and `fcs --json` commands for FC/Bridge hardware.
 - v1 allows read/write operation from the start, while preserving the existing
   **Operator** review gate for every **Tune Update**.
 

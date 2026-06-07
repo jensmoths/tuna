@@ -179,97 +179,6 @@ class TuneCliTests(unittest.TestCase):
         self.assertEqual(completed["result"], "no_change")
         self.assertIn("diagnosis_id", completed)
 
-    def test_log_transfer_command_delegates_to_fcs_transfer_with_validation(self):
-        output = self.root / "flight.bbl"
-        payload = {
-            "download": {
-                "output_path": str(output),
-                "starts_with_blackbox_header": True,
-                "written_bytes": 1024,
-            },
-            "operator_next_step": "Power-cycle/reset the FC back to USB CDC/MSP mode before further FC operations.",
-        }
-        with patch("tune.cli.main.transfer_blackbox_log_from_bridge", return_value=payload) as transfer:
-            result = self.run_cli_json(
-                "log",
-                "transfer",
-                "--bridge-host",
-                "bridge.local",
-                "--output",
-                str(output),
-                "--size",
-                "1048576",
-                "--timeout",
-                "12",
-            )
-        self.assertEqual(result, payload)
-        transfer.assert_called_once_with(
-            "bridge.local",
-            output_path=output,
-            size=1048576,
-            trigger_msc=True,
-            timeout_seconds=12.0,
-            resume=True,
-            chunk_size=1024 * 1024,
-            max_attempts=3,
-            progress=None,
-        )
-
-    def test_log_transfer_size_is_optional_for_discovery_path(self):
-        output = self.root / "flight.bbl"
-        payload = {
-            "download": {
-                "output_path": str(output),
-                "starts_with_blackbox_header": True,
-                "written_bytes": 1024,
-            },
-            "operator_next_step": "Power-cycle/reset the FC back to USB CDC/MSP mode before further FC operations.",
-        }
-        with patch("tune.cli.main.transfer_blackbox_log_from_bridge", return_value=payload) as transfer:
-            result = self.run_cli_json(
-                "log",
-                "transfer",
-                "--bridge-host",
-                "bridge.local",
-                "--output",
-                str(output),
-                "--timeout",
-                "12",
-            )
-
-        self.assertEqual(result, payload)
-        transfer.assert_called_once_with(
-            "bridge.local",
-            output_path=output,
-            size=None,
-            trigger_msc=True,
-            timeout_seconds=12.0,
-            resume=True,
-            chunk_size=1024 * 1024,
-            max_attempts=3,
-            progress=None,
-        )
-
-    def test_log_transfer_json_error_is_structured(self):
-        output = self.root / "flight.bbl"
-        with patch("tune.cli.main.transfer_blackbox_log_from_bridge", side_effect=TimeoutError("bridge status timed out")):
-            code, result = self.run_cli_json_with_code(
-                "log",
-                "transfer",
-                "--bridge-host",
-                "bridge.local",
-                "--output",
-                str(output),
-                "--size",
-                "1048576",
-            )
-
-        self.assertEqual(code, 1)
-        self.assertEqual(result["error"]["kind"], "TimeoutError")
-        self.assertEqual(result["error"]["failure_stage"], "bridge_status")
-        self.assertTrue(result["error"]["retryable"])
-        self.assertIn("recommended_next_action", result["error"])
-
     def test_log_analyze_json_is_concise_and_can_write_full_json_file(self):
         self.run_cli_json("db", "init")
         build = self.run_cli_json("build", "create", "5 inch")
@@ -291,7 +200,7 @@ class TuneCliTests(unittest.TestCase):
         full_json = self.root / "analysis.json"
 
         result = self.run_cli_json(
-            "log",
+            "analysis",
             "analyze",
             "--log-id",
             str(log["log_id"]),
@@ -308,7 +217,7 @@ class TuneCliTests(unittest.TestCase):
         self.assertNotIn("ranges", result)
         self.assertIn("ranges", json.loads(full_json.read_text()))
 
-        summary = self.run_cli_json("log", "analysis-summary", "--log-id", str(log["log_id"]))
+        summary = self.run_cli_json("analysis", "summary", "--log-id", str(log["log_id"]))
         self.assertEqual(summary["log_id"], log["log_id"])
         self.assertEqual(summary["row_count"], 2)
         self.assertIn("segment_counts", summary)
@@ -330,7 +239,7 @@ class TuneCliTests(unittest.TestCase):
         analysis = {"row_count": 1, "duration_seconds": 0.0, "quality": {"usable": False}, "warnings": []}
         with patch("tune.cli.main.decode_imported_log", return_value={"log_id": log["log_id"], "csv_path": str(csv_path)}) as decode:
             with patch("tune.cli.main.analyze_imported_log", return_value=analysis) as analyze:
-                result = self.run_cli_json("log", "decode-analyze", "--log-id", str(log["log_id"]))
+                result = self.run_cli_json("analysis", "decode-analyze", "--log-id", str(log["log_id"]))
 
         decode.assert_called_once()
         analyze.assert_called_once_with(ANY, log["log_id"], csv_path=str(csv_path))
@@ -350,7 +259,7 @@ class TuneCliTests(unittest.TestCase):
             str(self.root / "logs"),
         )
 
-        code, result = self.run_cli_json_with_code("log", "analyze", "--log-id", str(log["log_id"]))
+        code, result = self.run_cli_json_with_code("analysis", "analyze", "--log-id", str(log["log_id"]))
 
         self.assertEqual(code, 1)
         self.assertEqual(result["error"]["kind"], "ValueError")
@@ -468,7 +377,7 @@ class TuneCliTests(unittest.TestCase):
     def test_notify_blackbox_config_changed_cli_records_operator_notification(self):
         self.run_cli_json("db", "init")
         result = self.run_cli_json(
-            "notify",
+            "notification",
             "blackbox-config-changed",
             "--build-id",
             "1",
@@ -483,7 +392,7 @@ class TuneCliTests(unittest.TestCase):
         )
 
         self.assertEqual(result["kind"], "blackbox_config_changed")
-        notifications = self.run_cli_json("notify", "list")
+        notifications = self.run_cli_json("notification", "list")
         self.assertEqual(notifications[0]["id"], result["notification_id"])
         self.assertEqual(notifications[0]["kind"], "blackbox_config_changed")
         payload = json.loads(notifications[0]["payload_json"])
@@ -516,13 +425,6 @@ class TuneCliTests(unittest.TestCase):
         self.assertEqual(shown["id"], build["build_id"])
         self.assertEqual(shown["fc_snapshot"]["identity"]["fc_variant"], "BTFL")
 
-    def test_fcs_inspect_cli_delegates_to_probe_service(self):
-        payload = {"identity": {"fc_variant": "BTFL"}, "blackbox_storage": {"used_size": 42}}
-        with patch("tune.cli.main.inspect_fcs", return_value=payload) as inspect:
-            result = self.run_cli_json("fcs", "inspect", "--bridge-host", "bridge.local", "--timeout", "3")
-
-        self.assertEqual(result, payload)
-        inspect.assert_called_once_with("bridge.local", port=5761, timeout_seconds=3.0)
 
 
 if __name__ == "__main__":

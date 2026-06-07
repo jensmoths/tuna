@@ -14,6 +14,16 @@ See `docs/domain-model.md` for canonical Tuna vocabulary and domain rules.
 - The **Operator** performs human-only actions and review decisions.
 - The **Pilot** flies and generates **Blackbox Logs**.
 
+
+## CLI/API boundary
+
+- FCS is a first-class JSON CLI for hardware operations and must not read or write Tuna SQLite state.
+- `tune` is the agent-facing JSON CLI for Tuna durable state, domain rules, Host Computer artifacts, and analysis records; it must not talk directly to the flight controller.
+- The **Tuning Agent** sequences `fcs` and `tune`: use FCS for FC/Bridge actions, then use `tune` to record/import/query the resulting Tuna state.
+- `tune` commands are grouped by Tuna resource/lifecycle: `loop`, `build`, `task`, `notification`, `log`, `analysis`, `iteration`, `diagnosis`, and `update`.
+- `tune log` is for retained/imported **Blackbox Log** artifacts on the **Host Computer**.
+- `tune analysis` is for decode/analyze outputs and analysis summaries derived from imported **Blackbox Logs**.
+
 ## Storage
 
 - Use SQLite for durable Tuna state/history.
@@ -84,9 +94,9 @@ See `docs/domain-model.md` for canonical Tuna vocabulary and domain rules.
 ## Blackbox Log transfer and Import
 
 - **Post-flight Transfer** means moving completed **Blackbox Logs** from FC/Bridge storage to the **Host Computer** using FCS.
-- The Tuning Agent-facing command for v1 **Post-flight Transfer** is `python3 -m tune --db ... log transfer --bridge-host ... --output ... --json`.
-- `tune log transfer` owns Bridge/FC mode validation, optional Betaflight `msc` triggering, waiting for MSC readiness, preferring the actual mounted Betaflight `.bbl` file when available, falling back to raw MSC download with resume sidecars, trimming leading padding before the Blackbox header for raw fallback, and validating that the output starts with `H Product:Blackbox`.
-- When starting from USB CDC/MSP mode, `tune log transfer` discovers the FC-reported Blackbox storage `used_size` before triggering MSC mode. `--size` remains an override/debug option for cases such as resuming while the Bridge is already in MSC raw mode and MSP storage discovery is unavailable.
+- The Tuning Agent-facing command for v1 **Post-flight Transfer** is `PYTHONPATH=fcs-host python3 fcs-host/fcs.py blackbox transfer --bridge-host ... --output ... --json`; afterward the Tuning Agent records the retained Host Computer artifact with `python3 -m tune --db ... log import ... --json`.
+- `fcs blackbox transfer` owns Bridge/FC mode validation, optional Betaflight `msc` triggering, waiting for MSC readiness, preferring the actual mounted Betaflight `.bbl` file when available, falling back to raw MSC download with resume sidecars, trimming leading padding before the Blackbox header for raw fallback, and validating that the output starts with `H Product:Blackbox`.
+- When starting from USB CDC/MSP mode, `fcs blackbox transfer` discovers the FC-reported Blackbox storage `used_size` before triggering MSC mode. `--size` remains an override/debug option for cases such as resuming while the Bridge is already in MSC raw mode and MSP storage discovery is unavailable.
 - After successful raw MSC transfer, the **Operator** must reset/power-cycle the FC back to USB CDC/MSP mode before further FC operations; current v1 cannot reliably return from MSC to CDC through FCS alone.
 - MSP dataflash download is not a Tuna **Post-flight Transfer** fallback because it is too slow for the normal workflow. If raw MSC transfer is unavailable, the **Tuning Agent** should request FCS/Bridge remediation or report the hardware limitation.
 - **Import** means registering a transferred **Blackbox Log** in Tuna state, associating it with a **Build**, making it analyzable, and extracting metadata.
@@ -94,11 +104,11 @@ See `docs/domain-model.md` for canonical Tuna vocabulary and domain rules.
 - Import should attempt metadata extraction from the beginning.
 - Import records source path, managed/canonical path, file size, hash, import time, **Build** association, parse status, metadata JSON, and warnings where available.
 
-Validation note from 2026-06-06: a real FC **Blackbox Log** was transferred through `tune log transfer` from `tuna-bridge-usb` while the FC was in MSC raw mode, using `--size 868352` and `--chunk-size 262144`. The transfer downloaded `868352` raw bytes with one retry, trimmed the Blackbox header at raw offset `562176`, wrote a `306176` byte `.bbl`, and verified `download.starts_with_blackbox_header=true`. Tuna then imported it as **Blackbox Log** `log_id=2` with `parse_status=readable`, decoded it to `tune-data/decoded-logs/log-2.csv`, and analyzed it as `analysis_id=3`. The analysis found `184` rows over `0.090817` seconds and marked the log unusable only because the capture duration was too short for tuning analysis. After transfer, the FC remained in MSC mode and required Operator reset/power-cycle before further USB CDC/MSP operations.
+Validation note from 2026-06-06: a real FC **Blackbox Log** was transferred through `fcs blackbox transfer` from `tuna-bridge-usb` while the FC was in MSC raw mode, using `--size 868352` and `--chunk-size 262144`. The transfer downloaded `868352` raw bytes with one retry, trimmed the Blackbox header at raw offset `562176`, wrote a `306176` byte `.bbl`, and verified `download.starts_with_blackbox_header=true`. Tuna then imported it as **Blackbox Log** `log_id=2` with `parse_status=readable`, decoded it to `tune-data/decoded-logs/log-2.csv`, and analyzed it as `analysis_id=3`. The analysis found `184` rows over `0.090817` seconds and marked the log unusable only because the capture duration was too short for tuning analysis. After transfer, the FC remained in MSC mode and required Operator reset/power-cycle before further USB CDC/MSP operations.
 
-Follow-up validation on 2026-06-06 confirmed the one-shot CDC/MSP-to-MSC path: `tune log transfer` started from `USB_CDC_CONNECTED`, entered Betaflight CLI, sent `msc`, observed `msc_raw=1`, transferred the same `868352` raw bytes with zero retries, trimmed the header at raw offset `562176`, wrote a `306176` byte `.bbl`, and verified the Blackbox header.
+Follow-up validation on 2026-06-06 confirmed the one-shot CDC/MSP-to-MSC path: `fcs blackbox transfer` started from `USB_CDC_CONNECTED`, entered Betaflight CLI, sent `msc`, observed `msc_raw=1`, transferred the same `868352` raw bytes with zero retries, trimmed the header at raw offset `562176`, wrote a `306176` byte `.bbl`, and verified the Blackbox header.
 
-Erase-after-import validation on 2026-06-06 confirmed `fcs_blackbox_erase.py tuna-bridge-usb --confirm erase-transferred-blackbox-log` after validated transfer/import. Storage changed from `used_size=868352` before erase to `used_size=0` on a follow-up storage probe, with `total_size=16777216` still reported.
+Erase-after-import validation on 2026-06-06 confirmed `fcs blackbox erase --bridge-host tuna-bridge-usb --confirm erase-transferred-blackbox-log --json` after validated transfer/import. Storage changed from `used_size=868352` before erase to `used_size=0` on a follow-up storage probe, with `total_size=16777216` still reported.
 
 
 
@@ -107,9 +117,9 @@ Erase-after-import validation on 2026-06-06 confirmed `fcs_blackbox_erase.py tun
 - Do not implement a full Blackbox binary decoder in Tuna initially.
 - Use Betaflight `blackbox_decode` as the first decoder backend for `.bbl` to CSV conversion.
 - Treat Blackbox Explorer and PIDtoolbox as human reference/validation tools, not the first automated backend.
-- `python3 -m tune --db ... log decode --log-id ... --json` decodes an imported **Blackbox Log** to a CSV artifact and records it in SQLite.
-- `python3 -m tune --db ... log analyze --log-id ... --json` analyzes the latest decoded CSV, or a provided CSV path, and records JSON analysis in SQLite.
-- `python3 -m tune --db ... log decode-analyze --log-id ... --json` is the preferred **Tuning Agent** command because it avoids accidentally running decode and analyze in parallel.
+- `python3 -m tune --db ... analysis decode --log-id ... --json` decodes an imported **Blackbox Log** to a CSV artifact and records it in SQLite.
+- `python3 -m tune --db ... analysis analyze --log-id ... --json` analyzes the latest decoded CSV, or a provided CSV path, and records JSON analysis in SQLite.
+- `python3 -m tune --db ... analysis decode-analyze --log-id ... --json` is the preferred **Tuning Agent** command because it avoids accidentally running decode and analyze in parallel.
 - Initial analysis is intentionally simple and machine-readable: row count, duration, fields present, field count, ranges for gyro/setpoint/motor/PID-term fields, and warnings for missing expected fields.
 - Future analysis can add maneuver detection, noise summaries, response/overshoot metrics, motor saturation checks, and PIDtoolbox-like spectral analysis.
 
@@ -118,10 +128,10 @@ Erase-after-import validation on 2026-06-06 confirmed `fcs_blackbox_erase.py tun
 - The **Tuning Agent** finds Operator-approved writes with `tune update pending-writes --json`.
 - Pending write results include the **Tune Update** id, **Build** id, **Tuning Iteration** id, structured settings, Betaflight CLI artifact, and **Diagnosis** text where available.
 - The **Tuning Agent** performs write-back through **FCS**, not through the Operator Console.
-- FCS owns the low-level Betaflight CLI write-back helper.
+- FCS owns the low-level Betaflight CLI write-back helper exposed as `fcs cli write --json`.
 - After write-back, the **Tuning Agent** records either `tune update apply --update-id ... --json` or `tune update record-write-failure --update-id ... --failure ... --json`.
 - The initial FCS write-back boundary sends generated Betaflight CLI text over the raw Bridge transport after entering CLI mode. The caller owns safety checks and FC identity verification before invoking it.
-- Hardware validation on 2026-06-06 confirmed `fcs_write_cli.py` against `tuna-bridge-usb` with a no-op approved-value CLI command, `set d_pitch = 46`, followed by `save`; the FC accepted the command and a post-write MSP smoke test reported Betaflight `25.12.3`, variant `BTFL`, MSP API `1.47`.
+- Hardware validation on 2026-06-06 confirmed `fcs cli write` against `tuna-bridge-usb` with a no-op approved-value CLI command, `set d_pitch = 46`, followed by `save`; the FC accepted the command and a post-write MSP smoke test reported Betaflight `25.12.3`, variant `BTFL`, MSP API `1.47`.
 
 ## Proposed package structure
 

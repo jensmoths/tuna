@@ -437,13 +437,13 @@ class PiRpcSupervisor:
     def _status_for_tool(self, event: dict[str, Any]) -> str:
         args = event.get("args") or {}
         text = " ".join(str(value) for value in args.values()).lower()
-        if " log transfer" in text or "msc_raw" in text:
+        if "blackbox transfer" in text or "msc_raw" in text:
             return "Transferring Blackbox Log"
         if " log import" in text:
             return "Importing Blackbox Log"
-        if " log decode" in text:
+        if " analysis decode" in text or " decode-analyze" in text:
             return "Decoding Blackbox Log"
-        if " log analyze" in text:
+        if " analysis analyze" in text:
             return "Analyzing Blackbox Log"
         if " diagnosis record" in text:
             return "Recording Diagnosis"
@@ -507,7 +507,7 @@ class PiRpcSupervisor:
         bridge_line = bridge_host or "not provided"
         skill_text = self._tuning_agent_skill_text()
         fcs_step = (
-            f"2. If an FCS Bridge host is provided, query the connected FC with `python3 -m tune --db {self.db_path} fcs inspect --bridge-host {bridge_host} --json` and compare that snapshot with the Loop Build snapshot."
+            f"2. If an FCS Bridge host is provided, query the connected FC with `PYTHONPATH=fcs-host python3 fcs-host/fcs.py inspect --bridge-host {bridge_host} --json` and compare that snapshot with the Loop Build snapshot."
             if bridge_host
             else "2. No FCS Bridge host was provided; skip connected-FC inspection unless one appears in Tuna state."
         )
