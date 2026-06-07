@@ -1,12 +1,36 @@
 {% extends "layout.html" %}{% block body %}
 <h1>Loops</h1>
+<div class="card">
+  <h2>Start a new Loop</h2>
+  {% if builds %}
+  <form method="post" action="/loops">
+    <label>Build
+      <select name="build_id" required>
+        {% for build in builds %}<option value="{{ build.id }}">#{{ build.id }} {{ build.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Tune Goal
+      <textarea name="tune_goal" rows="3" required placeholder="Describe what this Loop should improve or verify"></textarea>
+    </label>
+    <button type="submit">Start new Loop</button>
+  </form>
+  {% else %}
+  <p><a href="/builds">Create or confirm a Build</a> before starting a Loop.</p>
+  {% endif %}
+</div>
+
 {% for item in loops %}
 <div class="card">
   <h2>Loop #{{ item.id }} — {{ item.status }}</h2>
   <p><strong>Build:</strong> #{{ item.build_id }} {{ item.build_name }}</p>
   <p><strong>Tune Goal:</strong> {{ item.tune_goal }}</p>
-  <p class="muted">Created {{ item.created_at }}{% if item.ended_at %} · ended {{ item.ended_at }}{% endif %}</p>
+  <p class="muted">Created {{ item.created_at | local_time }}{% if item.ended_at %} · ended {{ item.ended_at | local_time }}{% endif %}</p>
   <p><a href="/loops/{{ item.id }}">View Loop history</a></p>
+  {% if item.status == 'open' %}
+  <form method="post" action="/loops/{{ item.id }}/close">
+    <button type="submit">Close Loop</button>
+  </form>
+  {% endif %}
 </div>
 {% else %}<p>No Loops recorded yet.</p>{% endfor %}
 {% endblock %}

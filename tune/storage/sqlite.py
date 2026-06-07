@@ -37,13 +37,26 @@ def _migrate_tuning_agent_sessions(conn: sqlite3.Connection) -> None:
           pi_session_file TEXT,
           status TEXT NOT NULL DEFAULT 'Idle',
           bridge_host TEXT NOT NULL DEFAULT '',
+          pi_model TEXT NOT NULL DEFAULT '',
+          thinking_level TEXT NOT NULL DEFAULT '',
           process_id INTEGER,
           last_error TEXT,
+          debug_trace TEXT NOT NULL DEFAULT '',
+          resume_cursor_json TEXT NOT NULL DEFAULT '{}',
           started_at TEXT,
           updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(tuning_agent_sessions)")}
+    if "pi_model" not in columns:
+        conn.execute("ALTER TABLE tuning_agent_sessions ADD COLUMN pi_model TEXT NOT NULL DEFAULT ''")
+    if "thinking_level" not in columns:
+        conn.execute("ALTER TABLE tuning_agent_sessions ADD COLUMN thinking_level TEXT NOT NULL DEFAULT ''")
+    if "debug_trace" not in columns:
+        conn.execute("ALTER TABLE tuning_agent_sessions ADD COLUMN debug_trace TEXT NOT NULL DEFAULT ''")
+    if "resume_cursor_json" not in columns:
+        conn.execute("ALTER TABLE tuning_agent_sessions ADD COLUMN resume_cursor_json TEXT NOT NULL DEFAULT '{}'")
 
 
 def _migrate_operator_notifications(conn: sqlite3.Connection) -> None:

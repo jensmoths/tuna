@@ -1,0 +1,29 @@
+{% extends "layout.html" %}{% block body %}
+<h1>Builds</h1>
+<div class="card">
+  <h2>Create a new Build</h2>
+  <form method="post" action="/builds">
+    <label>Build name <input name="name" required placeholder="5-inch freestyle"></label>
+    <label>FC snapshot JSON
+      <textarea name="fc_snapshot_json" rows="5" placeholder='{"fc_variant":"BTFL","fc_version":"25.12.3"}'></textarea>
+    </label>
+    <label>Operator notes
+      <textarea name="operator_notes" rows="3" placeholder="Airframe, motors, props, battery, or confirmation notes"></textarea>
+    </label>
+    <button type="submit">Create Build</button>
+  </form>
+  <p class="muted">Tip: if FCS is connected, start the Tuning Agent from a Loop and it should verify the connected FC snapshot through FCS and create a Build confirmation task if needed.</p>
+</div>
+
+{% for build in builds %}
+<div class="card" id="build-{{ build.id }}">
+  <h2>Build #{{ build.id }} — {{ build.name }}</h2>
+  <p class="muted">Created {{ build.created_at | local_time }}</p>
+  {% if build.operator_notes %}<p><strong>Operator notes:</strong> {{ build.operator_notes }}</p>{% endif %}
+  <details><summary>FC snapshot</summary><pre>{{ build.fc_snapshot | tojson(indent=2) }}</pre></details>
+  <p><a href="/loops">Start a Loop for this Build</a></p>
+</div>
+{% else %}
+<p>No Builds recorded yet.</p>
+{% endfor %}
+{% endblock %}

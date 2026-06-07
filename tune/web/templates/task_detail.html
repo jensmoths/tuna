@@ -15,22 +15,23 @@
 <div class="card">
   <p><strong>Capture goal:</strong> {{ task.payload.capture_goal }}</p>
   <h3>Pilot instructions</h3><ul>{% for item in task.payload.pilot_instructions %}<li>{{ item }}</li>{% endfor %}</ul>
-  <h3>Post-flight steps</h3><ul>{% for item in task.payload.post_flight_steps %}<li>{{ item }}</li>{% endfor %}</ul>
+  <h3>Operator post-flight steps</h3><ul>{% for item in task.payload.operator_post_flight_steps %}<li>{{ item }}</li>{% endfor %}</ul>
+  <h3>Tuning Agent follow-up</h3><ul>{% for item in task.payload.tuning_agent_follow_up_steps %}<li>{{ item }}</li>{% endfor %}</ul>
   <p><strong>Expected result:</strong> {{ task.payload.expected_result }}</p>
 </div>
 {% if task.status == 'open' %}
-<div class="card"><h2>Resolve flight capture request</h2><form method="post" action="/tasks/{{ task.id }}/resolve-flight-capture"><label><input type="checkbox" name="imported" value="yes"> Blackbox Log was captured, transferred, and imported</label><label>Operator notes</label><textarea name="notes"></textarea><p><button type="submit">Resolve task</button></p></form></div>
+<div class="card"><h2>Resolve flight capture request</h2><form method="post" action="/tasks/{{ task.id }}/resolve-flight-capture"><label><input type="radio" name="decision" value="captured_needs_transfer" required> Blackbox Log was captured; Tuning Agent should perform Post-flight Transfer and Import</label><label><input type="radio" name="decision" value="capture_failed"> Capture failed or no usable Blackbox Log is available</label><label>Operator notes</label><textarea name="notes"></textarea><p><button type="submit">Resolve task</button></p></form></div>
 {% endif %}
 <h2>Payload</h2><pre>{{ task.payload | tojson(indent=2) }}</pre>
 {% elif task.kind == 'confirm_build' %}
 <h2>Build confirmation</h2>
 <div class="card">
-  <p><strong>Reason:</strong> {{ task.payload.reason }}</p>
-  {% if task.payload.candidate_build_id %}<p><strong>Candidate Build:</strong> #{{ task.payload.candidate_build_id }}</p>{% endif %}
+  {% if task.payload.reason %}<p><strong>Reason:</strong> {{ task.payload.reason }}</p>{% endif %}
+  {% if candidate_build %}<p><strong>Candidate Build:</strong> #{{ candidate_build.id }} {{ candidate_build.name }}</p>{% elif task.payload.candidate_build_id %}<p><strong>Candidate Build:</strong> #{{ task.payload.candidate_build_id }}</p>{% endif %}
   <h3>FC snapshot</h3><pre>{{ task.payload.fc_snapshot | tojson(indent=2) }}</pre>
 </div>
 {% if task.status == 'open' %}
-<div class="card"><h2>Resolve Build confirmation</h2><form method="post" action="/tasks/{{ task.id }}/resolve-build-confirmation"><label><input type="radio" name="decision" value="matches_existing_build" required> Snapshot matches an existing Build</label><label>Existing Build id</label><input name="build_id" value="{{ task.payload.candidate_build_id or '' }}"><br><label><input type="radio" name="decision" value="create_new_build"> This should be a new Build</label><label>New Build name</label><input name="build_name"><br><label><input type="radio" name="decision" value="cannot_confirm"> Cannot confirm yet</label><label>Operator notes</label><textarea name="notes"></textarea><p><button type="submit">Resolve task</button></p></form></div>
+<div class="card"><h2>Resolve Build confirmation</h2><form method="post" action="/tasks/{{ task.id }}/resolve-build-confirmation"><label><input type="radio" name="decision" value="matches_existing_build" required> Snapshot matches an existing Build</label><label>Existing Build</label><select name="build_id"><option value="">Select Build</option>{% for build in builds %}<option value="{{ build.id }}"{% if build.id == task.payload.candidate_build_id %} selected{% endif %}>#{{ build.id }} {{ build.name }}</option>{% endfor %}</select><br><label><input type="radio" name="decision" value="create_new_build"> This should be a new Build</label><label>New Build name</label><input name="build_name"><br><label><input type="radio" name="decision" value="cannot_confirm"> Cannot confirm yet</label><label>Operator notes</label><textarea name="notes"></textarea><p><button type="submit">Resolve task</button></p></form></div>
 {% endif %}
 <h2>Payload</h2><pre>{{ task.payload | tojson(indent=2) }}</pre>
 {% elif task.kind == 'request_tune_goal' %}
@@ -45,5 +46,19 @@
 <div class="card"><h2>Resolve Tune Goal request</h2><form method="post" action="/tasks/{{ task.id }}/resolve-tune-goal"><label>Tune Goal</label><textarea name="tune_goal" required></textarea><label>Operator notes</label><textarea name="notes"></textarea><p><button type="submit">Resolve task</button></p></form></div>
 {% endif %}
 <h2>Payload</h2><pre>{{ task.payload | tojson(indent=2) }}</pre>
-{% else %}<h2>Payload</h2><pre>{{ task.payload | tojson(indent=2) }}</pre>{% endif %}
+{% else %}
+{% if task.status == 'open' %}
+<div class="card">
+  <h2>Resolve Operator Task</h2>
+  <p>This records the Operator response only. The Tuning Agent decides the next Loop action after reading it.</p>
+  <form method="post" action="/tasks/{{ task.id }}/resolve-generic">
+    <label><input type="radio" name="decision" value="completed" checked> Completed / available</label>
+    <label><input type="radio" name="decision" value="cannot_complete"> Cannot complete / unavailable</label>
+    <label>Operator notes</label>
+    <textarea name="notes" placeholder="For example: FCS is connected, bridge host is tuna-bridge-usb; or explain why it is unavailable."></textarea>
+    <p><button type="submit">Resolve task</button></p>
+  </form>
+</div>
+{% endif %}
+<h2>Payload</h2><pre>{{ task.payload | tojson(indent=2) }}</pre>{% endif %}
 {% endblock %}

@@ -6,6 +6,11 @@
   <p><strong>Tune Goal:</strong> {{ loop.tune_goal }}</p>
   {% if loop.operator_notes %}<p><strong>Operator notes:</strong> {{ loop.operator_notes }}</p>{% endif %}
   <details><summary>FC snapshot</summary><pre>{{ loop.fc_snapshot | tojson(indent=2) }}</pre></details>
+  {% if loop.status == 'open' %}
+  <form method="post" action="/loops/{{ loop.id }}/close">
+    <button type="submit">Close Loop</button>
+  </form>
+  {% endif %}
 </div>
 
 <h2>Tuning Agent</h2>
@@ -13,18 +18,50 @@
   {% if agent_session %}
   <p><strong>Status:</strong> {{ agent_session.status }}</p>
   {% if agent_session.bridge_host %}<p><strong>FCS Bridge host:</strong> {{ agent_session.bridge_host }}</p>{% endif %}
+  {% if agent_session.pi_model %}<p><strong>Pi model:</strong> {{ pi_model_choices.get(agent_session.pi_model, agent_session.pi_model) }}{% if agent_session.thinking_level %} · <strong>Thinking:</strong> {{ agent_session.thinking_level }}{% endif %}</p>{% endif %}
   {% if agent_session.pi_session_file %}<p><strong>Pi session:</strong> {{ agent_session.pi_session_file }}</p>{% endif %}
   {% if agent_session.last_error %}<p><strong>Last error:</strong> {{ agent_session.last_error }}</p>{% endif %}
-  <p class="muted">Updated {{ agent_session.updated_at }}</p>
+  <p class="muted">Updated {{ agent_session.updated_at | local_time }}</p>
+  {% if agent_trace %}
+  <details open><summary>Supervisor trace</summary>
+    <div class="trace">
+      {% for entry in agent_trace %}
+      <div class="trace-entry trace-{{ entry.kind }}">
+        <div class="trace-meta"><span class="trace-badge">{{ entry.label }}</span>{% if entry.timestamp %}<span class="trace-time">{{ entry.timestamp | local_time }}</span>{% endif %}</div>
+        <div class="trace-text">{{ entry.message }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </details>
+  {% endif %}
   {% else %}
   <p>No Pi session has been started for this Loop.</p>
   {% endif %}
 
   <form method="post" action="/loops/{{ loop.id }}/tuning-agent/start">
-    <label>FCS Bridge host <input name="bridge_host" value="{{ agent_session.bridge_host if agent_session else '' }}" placeholder="tuna-bridge-usb"></label>
+    <label>FCS Bridge host <input name="bridge_host" value="{{ agent_session.bridge_host if agent_session and agent_session.bridge_host else default_bridge_host }}"></label>
+    <label>Pi model
+      <select name="pi_model">
+        {% set selected_model = agent_session.pi_model if agent_session and agent_session.pi_model else default_pi_model %}
+        {% for model_id, label in pi_model_choices.items() %}
+        <option value="{{ model_id }}"{% if selected_model == model_id %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Thinking level
+      <select name="thinking_level">
+        {% set selected_thinking = agent_session.thinking_level if agent_session and agent_session.thinking_level else default_thinking_level %}
+        {% for level in thinking_level_choices %}
+        <option value="{{ level }}"{% if selected_thinking == level %} selected{% endif %}>{{ level }}</option>
+        {% endfor %}
+      </select>
+    </label>
     <button type="submit">Start or resume Tuning Agent</button>
+    {% if agent_session and not agent_process_running %}
+    <button type="submit" formaction="/loops/{{ loop.id }}/tuning-agent/continue">Resume / continue after abort</button>
+    {% endif %}
   </form>
-  {% if agent_session and agent_session.process_id %}
+  {% if agent_process_running %}
   <form method="post" action="/loops/{{ loop.id }}/tuning-agent/abort">
     <button type="submit">Abort Tuning Agent</button>
   </form>
@@ -39,7 +76,7 @@
     <strong>Status:</strong> {{ iteration.status }}
     {% if iteration.result %} · <strong>Result:</strong> {{ iteration.result.replace('_', ' ') }}{% endif %}
   </p>
-  <p class="muted">Created {{ iteration.created_at }}{% if iteration.completed_at %} · completed {{ iteration.completed_at }}{% endif %}</p>
+  <p class="muted">Created {{ iteration.created_at | local_time }}{% if iteration.completed_at %} · completed {{ iteration.completed_at | local_time }}{% endif %}</p>
   {% if iteration.no_change_reason %}<p><strong>No-change reason:</strong> {{ iteration.no_change_reason }}</p>{% endif %}
   {% if iteration.failure_reason %}<p><strong>Failure reason:</strong> {{ iteration.failure_reason }}</p>{% endif %}
 
@@ -52,7 +89,7 @@
 
   {% if iteration.diagnosis %}
   <h4>Diagnosis</h4>
-  <p class="muted">Confidence: {{ iteration.diagnosis.confidence or 'unspecified' }} · recorded {{ iteration.diagnosis.created_at }}</p>
+  <p class="muted">Confidence: {{ iteration.diagnosis.confidence or 'unspecified' }} · recorded {{ iteration.diagnosis.created_at | local_time }}</p>
   <pre>{{ iteration.diagnosis.body }}</pre>
   <details><summary>Evidence JSON</summary><pre>{{ iteration.diagnosis.evidence | tojson(indent=2) }}</pre></details>
   {% else %}<p>No Diagnosis recorded.</p>{% endif %}

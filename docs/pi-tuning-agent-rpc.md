@@ -33,6 +33,11 @@ procedure. It owns instructions for:
 - When to propose a **Tune Update** or recommend no change.
 - When to create **Operator Tasks** and **Operator Notifications**.
 
+At runtime, the supervisor starts Pi with `--no-context-files` and
+`--no-skills`, then injects the contents of `tune/agent/SKILL.md` into the
+prompt. This gives the **Tuning Agent** the Tuna operating procedure without
+loading repository context files or global/project skills.
+
 The skill must not describe Pi RPC framing, Flask routes, subprocess restart
 policy, or UI transport details.
 
@@ -106,7 +111,14 @@ Then the supervisor starts or resumes Pi RPC and sends an initial prompt.
 Example initial prompt shape:
 
 ```text
-Use tune/agent/SKILL.md and act as the Tuna Tuning Agent.
+Act as the Tuna Tuning Agent for this Loop. Use the injected operating
+instructions below; do not load skills, context files, source files, or
+repository documentation during normal Loop operation.
+
+Injected Tuna Tuning Agent operating instructions:
+<contents of tune/agent/SKILL.md injected by supervisor>
+
+Runtime Loop assignment:
 
 Operator requested a Loop.
 
@@ -116,7 +128,7 @@ Tune Goal: reduce propwash while preserving freestyle response
 FCS Bridge host: tuna-bridge-usb
 
 First:
-1. Inspect Tuna state with JSON tune commands.
+1. Inspect Tuna state with `python3 -m tune --db tune.sqlite3 loop context --loop-id <id> --json` when a Loop exists, or concise JSON tune commands otherwise.
 2. Confirm whether the Build and Tune Goal are sufficient.
 3. If needed, create Operator Tasks.
 4. If sufficient, create or resume the Loop.
@@ -125,6 +137,7 @@ First:
 
 Preserve Tuna safety rules. Do not apply a Tune Update without Operator review.
 Use FCS, not raw Bridge protocol access, for flight-controller operations.
+Do not read source code during normal Loop operation; use CLI help if syntax is unclear.
 ```
 
 The prompt gives context; it does not prescribe the full workflow outcome. The

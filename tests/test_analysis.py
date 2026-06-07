@@ -67,6 +67,27 @@ class AnalysisTests(AnalysisTestCase):
         with self.assertRaises(BlackboxDecodeError):
             decode_blackbox_log("missing.bbl", self.root / "out.csv", decoder_command="definitely-not-blackbox-decode")
 
+    def test_decode_blackbox_log_selects_largest_csv_from_multi_log_file(self):
+        source = self.root / "multi.bbl"
+        source.write_bytes(b"dummy")
+        decoder = self.root / "fake_blackbox_decode"
+        decoder.write_text(
+            "#!/usr/bin/env python3\n"
+            "from pathlib import Path\n"
+            "import sys\n"
+            "out = Path(sys.argv[sys.argv.index('--output-dir') + 1])\n"
+            "stem = Path(sys.argv[-1]).stem\n"
+            "(out / f'{stem}.01.csv').write_text('small')\n"
+            "(out / f'{stem}.02.csv').write_text('largest csv')\n"
+        )
+        decoder.chmod(0o755)
+
+        output = self.root / "selected.csv"
+        result = decode_blackbox_log(source, output, decoder_command=str(decoder))
+
+        self.assertEqual(result, output)
+        self.assertEqual(output.read_text(), "largest csv")
+
     def test_service_returns_segment_rows_from_latest_analysis(self):
         conn = connect(self.root / "tune.sqlite3")
         init_db(conn)

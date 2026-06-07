@@ -106,8 +106,12 @@ CREATE TABLE IF NOT EXISTS tuning_agent_sessions (
   pi_session_file TEXT,
   status TEXT NOT NULL DEFAULT 'Idle',
   bridge_host TEXT NOT NULL DEFAULT '',
+  pi_model TEXT NOT NULL DEFAULT '',
+  thinking_level TEXT NOT NULL DEFAULT '',
   process_id INTEGER,
   last_error TEXT,
+  debug_trace TEXT NOT NULL DEFAULT '',
+  resume_cursor_json TEXT NOT NULL DEFAULT '{}',
   started_at TEXT,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

@@ -4,6 +4,8 @@ import json
 import sqlite3
 from typing import Any
 
+from tune.services.resume import update_loop_resume_cursor
+
 
 def create_task(conn: sqlite3.Connection, kind: str, title: str, *, body: str = "", payload: dict[str, Any] | None = None) -> int:
     cur = conn.execute(
@@ -25,7 +27,7 @@ def create_flight_capture_task(
     body = (
         "Fly and capture another Blackbox Log for Tuna analysis. The Tuning Agent is responsible for any "
         "flight-controller diagnostic setup through FCS before creating this task; the Operator/Pilot should "
-        "focus on the flight, Post-flight Transfer, and Import."
+        "focus on safely completing the flight and reporting whether a Blackbox Log was captured."
     )
     payload = {
         "build_id": build_id,
@@ -38,21 +40,64 @@ def create_flight_capture_task(
             "Avoid crashes, failsafe events, and obvious motor/output saturation when possible",
             "Land and disarm normally so the Blackbox Log is finalized",
         ],
-        "post_flight_steps": [
+        "operator_post_flight_steps": [
+            "Land and disarm normally so the Blackbox Log is finalized",
+            "Leave the FC/Bridge connected or reconnect it when possible",
+            "Tell the Tuning Agent whether the Blackbox Log was captured, or note why capture failed",
+        ],
+        "tuning_agent_follow_up_steps": [
             "Perform Post-flight Transfer through FCS",
             "Import the transferred Blackbox Log into Tuna",
-            "Tell the Tuning Agent which Blackbox Log was imported, or note why capture failed",
+            "Record which Blackbox Log was imported, or decide the next Loop action if capture failed",
         ],
-        "expected_result": "A transferred and imported Blackbox Log associated with this Build and Loop.",
+        "expected_result": "A completed flight capture response. The Tuning Agent then performs Post-flight Transfer and Import.",
+        "decision_options": [
+            "captured_needs_transfer",
+            "capture_failed",
+        ],
+        "required_response": {
+            "captured_needs_transfer": ["notes"],
+            "capture_failed": ["notes"],
+        },
     }
     return create_task(conn, "request_flight_capture", "Capture follow-up Blackbox Log", body=body, payload=payload)
+
+
+def create_fcs_connection_task(
+    conn: sqlite3.Connection,
+    *,
+    build_id: int | None = None,
+    loop_id: int | None = None,
+    bridge_host: str = "tuna-bridge-usb",
+    reason: str = "FCS Bridge connection is required before the Tuning Agent can continue.",
+    next_step: str = "Restore the FC/Bridge connection in USB CDC/MSP mode.",
+) -> int:
+    payload = {
+        "build_id": build_id,
+        "loop_id": loop_id,
+        "bridge_host": bridge_host,
+        "reason": reason,
+        "next_step": next_step,
+        "decision_options": ["completed", "cannot_complete"],
+        "required_response": {
+            "completed": ["notes"],
+            "cannot_complete": ["notes"],
+        },
+    }
+    return create_task(
+        conn,
+        "request_fcs_connection",
+        "Restore FCS connection for transfer",
+        body="Reconnect or power-cycle the FC/Bridge so Tuna can continue FCS operations.",
+        payload=payload,
+    )
 
 
 def create_build_confirmation_task(
     conn: sqlite3.Connection,
     *,
     fc_snapshot: dict[str, Any],
-    reason: str = "Confirm which Build is connected before starting or continuing a Loop.",
+    reason: str = "",
     candidate_build_id: int | None = None,
 ) -> int:
     body = (
@@ -107,8 +152,21 @@ def list_open_tasks(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 
 def resolve_task(conn: sqlite3.Connection, task_id: int, response: dict[str, Any]) -> None:
+    task = conn.execute("SELECT * FROM operator_tasks WHERE id = ?", (task_id,)).fetchone()
+    if task is None:
+        raise ValueError(f"Operator Task {task_id} does not exist")
     conn.execute(
         "UPDATE operator_tasks SET status = 'resolved', response_json = ?, resolved_at = CURRENT_TIMESTAMP WHERE id = ?",
         (json.dumps(response, sort_keys=True), task_id),
     )
     conn.commit()
+    payload = json.loads(task["payload_json"] or "{}")
+    update_loop_resume_cursor(
+        conn,
+        payload.get("loop_id"),
+        last_resolved_operator_task={
+            "id": task_id,
+            "kind": task["kind"],
+            "response": response,
+        },
+    )

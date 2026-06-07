@@ -1,10 +1,5 @@
 from .bridge_transport import BridgeTransport, BridgeConnectionError, probe_single_client_behavior
-from .blackbox_transfer import (
-    MAX_MSP_V1_DATAFLASH_READ_SIZE,
-    MAX_MSP_V2_DATAFLASH_READ_SIZE,
-    erase_dataflash,
-    read_dataflash_range,
-)
+from .blackbox_transfer import erase_dataflash
 from .fc_discovery import (
     BlackboxLogStorageStatus,
     FcCapabilities,
@@ -21,7 +16,6 @@ from .msp import (
     MSP_API_VERSION,
     MSP_BLACKBOX_CONFIG,
     MSP_DATAFLASH_ERASE,
-    MSP_DATAFLASH_READ,
     MSP_DATAFLASH_SUMMARY,
     MSP_FC_VARIANT,
     MSP_FC_VERSION,
@@ -29,9 +23,7 @@ from .msp import (
     MSP_SDCARD_SUMMARY,
     build_msp_v1_request,
     build_msp_v2_request,
-    build_dataflash_read_payload,
     parse_dataflash_summary,
-    parse_dataflash_read,
     parse_api_version,
     parse_fc_variant,
     parse_fc_version,
@@ -45,10 +37,7 @@ __all__ = [
     "BridgeTransport",
     "BridgeConnectionError",
     "probe_single_client_behavior",
-    "MAX_MSP_V1_DATAFLASH_READ_SIZE",
-    "MAX_MSP_V2_DATAFLASH_READ_SIZE",
     "erase_dataflash",
-    "read_dataflash_range",
     "BlackboxLogStorageStatus",
     "FcCapabilities",
     "FcIdentity",
@@ -64,7 +53,6 @@ __all__ = [
     "MSP_API_VERSION",
     "MSP_BLACKBOX_CONFIG",
     "MSP_DATAFLASH_ERASE",
-    "MSP_DATAFLASH_READ",
     "MSP_DATAFLASH_SUMMARY",
     "MSP_FC_VARIANT",
     "MSP_FC_VERSION",
@@ -72,9 +60,7 @@ __all__ = [
     "MSP_SDCARD_SUMMARY",
     "build_msp_v1_request",
     "build_msp_v2_request",
-    "build_dataflash_read_payload",
     "parse_dataflash_summary",
-    "parse_dataflash_read",
     "parse_api_version",
     "parse_fc_variant",
     "parse_fc_version",

@@ -34,9 +34,9 @@ def decode_blackbox_log(source_path: str | Path, output_csv: str | Path, *, deco
     if not produced:
         raise BlackboxDecodeError(f"blackbox_decode did not create a CSV in: {output.parent}")
 
-    first = produced[0]
-    if first != output:
+    selected = max(produced, key=lambda path: path.stat().st_size)
+    if selected != output:
         if output.exists():
             output.unlink()
-        first.rename(output)
+        selected.rename(output)
     return output

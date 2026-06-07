@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import json
 
 try:
     import flask  # noqa: F401
@@ -77,35 +78,50 @@ class OperatorWebTests(unittest.TestCase):
     def test_flight_capture_task_shows_instructions_and_resolves(self):
         task_id = create_flight_capture_task(self.conn, build_id=1, loop_id=2, reason="Need cleaner roll/pitch/yaw response evidence")
         client = create_app(self.db_path).test_client()
+        tasks_page = client.get("/tasks")
+        self.assertEqual(tasks_page.status_code, 200)
+        self.assertIn(b'class="local-time"', tasks_page.data)
+        self.assertIn(b'data-utc="', tasks_page.data)
         page = client.get(f"/tasks/{task_id}")
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"Flight capture request", page.data)
+        self.assertIn(b"Operator post-flight steps", page.data)
+        self.assertIn(b"Tuning Agent follow-up", page.data)
         self.assertIn(b"Post-flight Transfer", page.data)
-        response = client.post(f"/tasks/{task_id}/resolve-flight-capture", data={"imported": "yes", "notes": "Imported LOG001"})
+        response = client.post(
+            f"/tasks/{task_id}/resolve-flight-capture",
+            data={"decision": "captured_needs_transfer", "notes": "Captured; Tuning Agent should transfer"},
+        )
         self.assertEqual(response.status_code, 302)
         task = self.conn.execute("SELECT status, response_json FROM operator_tasks WHERE id = ?", (task_id,)).fetchone()
         self.assertEqual(task["status"], "resolved")
-        self.assertIn("imported", task["response_json"])
+        self.assertIn("captured_needs_transfer", task["response_json"])
 
     def test_build_confirmation_task_shows_snapshot_and_resolves(self):
+        create_build(self.conn, "5 inch")
         task_id = create_build_confirmation_task(
             self.conn,
-            candidate_build_id=3,
+            candidate_build_id=1,
             fc_snapshot={"fc_variant": "BTFL", "fc_version": "4.5.2"},
         )
         client = create_app(self.db_path).test_client()
         page = client.get(f"/tasks/{task_id}")
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"Build confirmation", page.data)
+        self.assertIn(b"Candidate Build:</strong> #1 5 inch", page.data)
+        self.assertIn(b">#1 5 inch</option>", page.data)
+        self.assertNotIn(b"Reason:", page.data)
         self.assertIn(b"BTFL", page.data)
         response = client.post(
             f"/tasks/{task_id}/resolve-build-confirmation",
-            data={"decision": "matches_existing_build", "build_id": "3", "notes": "Confirmed airframe"},
+            data={"decision": "matches_existing_build", "build_id": "1", "notes": "Confirmed airframe"},
         )
         self.assertEqual(response.status_code, 302)
         task = self.conn.execute("SELECT status, response_json FROM operator_tasks WHERE id = ?", (task_id,)).fetchone()
         self.assertEqual(task["status"], "resolved")
         self.assertIn("matches_existing_build", task["response_json"])
+        build = self.conn.execute("SELECT fc_snapshot_json FROM builds WHERE id = 1").fetchone()
+        self.assertEqual(json.loads(build["fc_snapshot_json"])["fc_variant"], "BTFL")
 
     def test_tune_goal_task_shows_prompt_and_resolves(self):
         task_id = create_tune_goal_task(self.conn, build_id=3)
@@ -121,6 +137,34 @@ class OperatorWebTests(unittest.TestCase):
         task = self.conn.execute("SELECT status, response_json FROM operator_tasks WHERE id = ?", (task_id,)).fetchone()
         self.assertEqual(task["status"], "resolved")
         self.assertIn("Reduce propwash", task["response_json"])
+
+    def test_generic_operator_task_can_resolve_request_fcs_connection(self):
+        build_id = create_build(self.conn, "5 inch")
+        loop_id = create_loop(self.conn, build_id, "baseline")
+        task_id = create_task(
+            self.conn,
+            "request_fcs_connection",
+            "Connect FCS",
+            body="Connect the FCS Bridge so the Tuning Agent can inspect the FC.",
+            payload={"loop_id": loop_id, "bridge_host": "tuna-bridge-usb"},
+        )
+        client = create_app(self.db_path).test_client()
+        page = client.get(f"/tasks/{task_id}")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Resolve Operator Task", page.data)
+
+        response = client.post(
+            f"/tasks/{task_id}/resolve-generic",
+            data={"decision": "completed", "notes": "FCS Bridge is connected at tuna-bridge-usb"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        task = self.conn.execute("SELECT status, response_json FROM operator_tasks WHERE id = ?", (task_id,)).fetchone()
+        self.assertEqual(task["status"], "resolved")
+        self.assertIn("FCS Bridge is connected", task["response_json"])
+        session = self.conn.execute("SELECT resume_cursor_json FROM tuning_agent_sessions WHERE loop_id = ?", (loop_id,)).fetchone()
+        cursor = json.loads(session["resume_cursor_json"])
+        self.assertEqual(cursor["last_resolved_operator_task"]["id"], task_id)
 
     def test_blackbox_config_notification_shows_change_and_acknowledges(self):
         notification_id = create_blackbox_config_notification(
@@ -165,6 +209,61 @@ class OperatorWebTests(unittest.TestCase):
         self.assertIn(b"no change", detail.data)
         self.assertIn(b"No safe Tune Update yet", detail.data)
         self.assertIn(b"Need a better follow-up Blackbox Log", detail.data)
+
+    def test_loop_page_can_create_and_close_loop(self):
+        build_id = create_build(self.conn, "5 inch", fc_snapshot={"fc_variant": "BTFL"})
+        client = create_app(self.db_path).test_client()
+
+        page = client.get("/loops")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Start new Loop", page.data)
+        self.assertNotIn(b"Close Loop", page.data)
+
+        response = client.post(
+            "/loops",
+            data={"build_id": str(build_id), "tune_goal": "Validate e2e workflow"},
+        )
+        self.assertEqual(response.status_code, 302)
+        loop = self.conn.execute("SELECT * FROM loops WHERE build_id = ?", (build_id,)).fetchone()
+        self.assertEqual(loop["status"], "open")
+        self.assertEqual(loop["tune_goal"], "Validate e2e workflow")
+
+        detail = client.get(f"/loops/{loop['id']}")
+        self.assertIn(b"Close Loop", detail.data)
+        from tune.services.operator_tasks import create_flight_capture_task
+        task_id = create_flight_capture_task(self.conn, build_id=build_id, loop_id=loop["id"])
+        close_response = client.post(f"/loops/{loop['id']}/close")
+        self.assertEqual(close_response.status_code, 302)
+        closed = self.conn.execute("SELECT status, ended_at FROM loops WHERE id = ?", (loop["id"],)).fetchone()
+        self.assertEqual(closed["status"], "closed")
+        self.assertIsNotNone(closed["ended_at"])
+        task = self.conn.execute("SELECT status, response_json FROM operator_tasks WHERE id = ?", (task_id,)).fetchone()
+        self.assertEqual(task["status"], "resolved")
+        self.assertIn("closed_with_loop", task["response_json"])
+
+    def test_build_page_can_create_build(self):
+        client = create_app(self.db_path).test_client()
+
+        page = client.get("/builds")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Create a new Build", page.data)
+
+        response = client.post(
+            "/builds",
+            data={
+                "name": "Darwin 5 inch",
+                "fc_snapshot_json": '{"fc_variant":"BTFL","fc_version":"25.12.3"}',
+                "operator_notes": "Operator-created Build",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        build = self.conn.execute("SELECT * FROM builds WHERE name = ?", ("Darwin 5 inch",)).fetchone()
+        self.assertIsNotNone(build)
+        self.assertIn("25.12.3", build["fc_snapshot_json"])
+
+        updated = client.get("/builds")
+        self.assertIn(b"Darwin 5 inch", updated.data)
+        self.assertIn(b"Operator-created Build", updated.data)
 
 
 if __name__ == "__main__":

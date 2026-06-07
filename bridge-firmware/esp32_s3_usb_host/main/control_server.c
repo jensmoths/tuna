@@ -5,6 +5,7 @@
 #include <sys/unistd.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <stdio.h>
 
 #include "bridge_config.h"
 #include "board_power.h"
@@ -20,6 +21,13 @@ static const char *TAG = "control";
 static void list_cb(const char *name, size_t size, void *ctx) {
   char line[256];
   snprintf(line, sizeof(line), "LOG %s %u\n", name, (unsigned)size);
+  tcp_single_client_send("control", (const uint8_t *)line, strlen(line));
+  (void)ctx;
+}
+
+static void msc_list_cb(const char *name, size_t size, void *ctx) {
+  char line[256];
+  snprintf(line, sizeof(line), "MSC_LOG %s %u\n", name, (unsigned)size);
   tcp_single_client_send("control", (const uint8_t *)line, strlen(line));
   (void)ctx;
 }
@@ -57,7 +65,7 @@ static esp_err_t control_on_data(const uint8_t *data, size_t len, void *ctx) {
     return tcp_single_client_send("control", (const uint8_t *)status, strlen(status));
   }
   if (strncmp(command, "HELP", 4) == 0) {
-    const char *help = "OK commands: STATUS STATUS_VERBOSE LIST GET <name> MSC_SCAN MSC_GET_RAW [bytes] HELP\n";
+    const char *help = "OK commands: STATUS STATUS_VERBOSE LIST GET <name> MSC_LIST MSC_GET <name> MSC_SCAN MSC_GET_RAW [bytes] HELP\n";
     return tcp_single_client_send("control", (const uint8_t *)help, strlen(help));
   }
   if (strncmp(command, "LIST", 4) == 0) {
@@ -68,6 +76,30 @@ static esp_err_t control_on_data(const uint8_t *data, size_t len, void *ctx) {
     esp_err_t err = usb_msc_blackbox_scan_and_copy();
     const char *reply = err == ESP_OK ? "OK\n" : "ERR MSC_SCAN not available\n";
     return tcp_single_client_send("control", (const uint8_t *)reply, strlen(reply));
+  }
+  if (strncmp(command, "MSC_LIST", 8) == 0) {
+    esp_err_t err = usb_msc_blackbox_list_logs(msc_list_cb, NULL);
+    if (err != ESP_OK) return tcp_single_client_send("control", (const uint8_t *)"ERR MSC_LIST not available\n", 27);
+    return tcp_single_client_send("control", (const uint8_t *)"OK\n", 3);
+  }
+  if (strncmp(command, "MSC_GET ", 8) == 0) {
+    char *name = command + 8;
+    name[strcspn(name, "\r\n")] = '\0';
+    FILE *file = NULL;
+    size_t size = 0;
+    if (usb_msc_blackbox_open_log(name, &file, &size) != ESP_OK) {
+      return tcp_single_client_send("control", (const uint8_t *)"ERR not found\n", 14);
+    }
+    char header[64];
+    snprintf(header, sizeof(header), "DATA %u\n", (unsigned)size);
+    tcp_single_client_send("control", (const uint8_t *)header, strlen(header));
+    uint8_t buf[1024];
+    size_t got;
+    while ((got = fread(buf, 1, sizeof(buf), file)) > 0) {
+      if (tcp_single_client_send("control", buf, got) != ESP_OK) break;
+    }
+    fclose(file);
+    return ESP_OK;
   }
   if (strncmp(command, "MSC_GET_RAW", 11) == 0) {
     size_t raw_size = 0;

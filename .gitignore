@@ -239,3 +239,5 @@ bridge-firmware/esp32_s3_usb_host/sdkconfig
 
 # ESP-IDF managed components
 bridge-firmware/esp32_s3_usb_host/managed_components/
+
+reallogs/

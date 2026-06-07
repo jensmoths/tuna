@@ -90,7 +90,7 @@ esp_err_t tcp_single_client_server_start(
           .ctx = ctx,
           .active_fd = -1,
       };
-      xTaskCreate(tcp_server_task, name, 4096, &s_servers[i], 5, NULL);
+      xTaskCreate(tcp_server_task, name, 8192, &s_servers[i], 5, NULL);
       return ESP_OK;
     }
   }

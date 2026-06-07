@@ -115,7 +115,11 @@ not treat `tune` as the whole Tuna product.
 - When the **Tuning Agent** needs another **Blackbox Log**, it should create a
   `request_flight_capture` **Operator Task**. Any diagnostic FC setup needed for
   that capture remains the **Tuning Agent**'s responsibility through **FCS** and
-  should be recorded separately as an **Operator Notification**.
+  should be recorded separately as an **Operator Notification**. **Post-flight
+  Transfer** and **Import** are also **Tuning Agent** responsibilities after the
+  Operator reports `captured_needs_transfer`. The Operator response should only
+  distinguish `captured_needs_transfer` from `capture_failed`; this avoids
+  making the Operator perform **Post-flight Transfer** or **Import**.
 - Approval of a **Tune Update** through the Operator Console means approved for
   **Tuning Agent** write-back through **FCS**, not already applied.
 - Current tune source of truth in v1 is Tuna's most recently applied recorded

@@ -9,13 +9,16 @@ from typing import Any
 from tune.services.analysis import analyze_imported_log, decode_imported_log
 from tune.services.builds import create_build
 from tune.services.diagnoses import record_diagnosis
-from tune.services.fcs_transfer import transfer_blackbox_log_from_bridge
+from tune.services.fcs_transfer import read_bridge_status, transfer_blackbox_log_from_bridge
+from tune.services.fcs_probe import inspect_fcs
 from tune.services.iterations import complete_no_change, create_iteration
 from tune.services.logs import import_blackbox_log
+from tune.services.loop_context import get_loop_context
 from tune.services.segment_rows import get_segment_rows
 from tune.services.loops import create_loop
 from tune.services.operator_notifications import create_blackbox_config_notification
-from tune.services.operator_tasks import create_build_confirmation_task, create_flight_capture_task, create_task, create_tune_goal_task
+from tune.services.operator_tasks import create_build_confirmation_task, create_fcs_connection_task, create_flight_capture_task, create_task, create_tune_goal_task
+from tune.services.resume import update_loop_resume_cursor
 from tune.services.tune_updates import approve_for_write, mark_applied, propose_tune_update, reject, record_application_failure
 from tune.storage import connect, init_db
 
@@ -37,6 +40,129 @@ def _emit(payload: dict[str, Any], json_output: bool) -> None:
         _print_json(payload)
     else:
         print(next(iter(payload.values())))
+
+
+def _loads_json_object(raw: str | None) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _task_payload(row: Any) -> dict[str, Any]:
+    item = _row_to_dict(row)
+    item["payload"] = _loads_json_object(item.get("payload_json"))
+    item["response"] = _loads_json_object(item.get("response_json")) if item.get("response_json") else None
+    return item
+
+
+def _notification_payload(row: Any) -> dict[str, Any]:
+    item = _row_to_dict(row)
+    item["payload"] = _loads_json_object(item.get("payload_json"))
+    item["acknowledged"] = _loads_json_object(item.get("acknowledged_json")) if item.get("acknowledged_json") else None
+    return item
+
+
+def _metadata_summary(metadata: dict[str, Any]) -> dict[str, Any]:
+    fields = metadata.get("fields") if isinstance(metadata.get("fields"), dict) else {}
+    return {
+        "firmware_type": metadata.get("firmware_type"),
+        "firmware_revision": metadata.get("firmware_revision"),
+        "firmware_date": metadata.get("firmware_date"),
+        "craft_name": metadata.get("craft_name"),
+        "data_version": metadata.get("data_version"),
+        "pids": metadata.get("pids"),
+        "field_counts": {key: len(value) for key, value in fields.items() if isinstance(value, list)},
+    }
+
+
+def _analysis_concise_payload(
+    conn: Any,
+    *,
+    log_id: int,
+    payload: dict[str, Any],
+    output_json_file: str | None = None,
+    csv_path: str | None = None,
+) -> dict[str, Any]:
+    analysis_row = conn.execute(
+        "SELECT id, analyzed_at FROM log_analyses WHERE log_id = ? ORDER BY analyzed_at DESC, id DESC LIMIT 1",
+        (log_id,),
+    ).fetchone()
+    concise_payload = {
+        "log_id": log_id,
+        "analysis_id": analysis_row["id"] if analysis_row else None,
+        "analyzed_at": analysis_row["analyzed_at"] if analysis_row else None,
+        "row_count": payload.get("row_count"),
+        "duration_seconds": payload.get("duration_seconds"),
+        "quality": payload.get("quality"),
+        "warnings": payload.get("warnings", []),
+        "analysis_json_file": output_json_file,
+        "full_analysis_stored": True,
+    }
+    if csv_path is not None:
+        concise_payload["csv_path"] = csv_path
+    return concise_payload
+
+
+def _write_analysis_file(path_text: str | None, payload: dict[str, Any]) -> str | None:
+    if not path_text:
+        return None
+    output_path = Path(path_text)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    return str(output_path)
+
+
+def _transfer_error_payload(exc: BaseException, *, output_path: Path) -> dict[str, Any]:
+    message = str(exc)
+    lowered = message.lower()
+    if "msc raw read" in lowered:
+        stage = "msc_raw_download"
+        next_action = "Retry the same log transfer command; resume sidecars are kept next to the output file."
+    elif "msc raw mode not ready" in lowered:
+        stage = "wait_for_msc_raw"
+        next_action = "Verify the Bridge/FC mode, then retry log transfer; use --no-trigger-msc only if MSC raw is already ready."
+    elif "blackbox header" in lowered:
+        stage = "validate_transfer"
+        next_action = "Do not import this file; retry transfer with a correct size or inspect the retained partial artifact."
+    elif "--size is required" in lowered:
+        stage = "transfer_size"
+        next_action = "Reset/power-cycle the FC back to USB CDC/MSP mode so FCS can discover Blackbox Log used_size, or retry with an explicit --size override if MSC raw mode is already ready."
+    elif "used_size" in lowered or "no blackbox log bytes" in lowered or "storage is not ready" in lowered:
+        stage = "transfer_size"
+        next_action = "Verify the FC has a completed Blackbox Log in ready storage, then retry Post-flight Transfer."
+    elif "cdc/msp" in lowered or "bridge is not in msc" in lowered:
+        stage = "mode_check"
+        next_action = "Restore the FC/Bridge connection in USB CDC/MSP mode or MSC raw mode, then retry log transfer."
+    else:
+        stage = "bridge_status"
+        next_action = "Verify the Bridge is reachable and retry log transfer; create a request_fcs_connection Operator Task if it remains unavailable."
+    return {
+        "error": {
+            "kind": exc.__class__.__name__,
+            "message": message,
+            "failure_stage": stage,
+            "retryable": True,
+            "recommended_next_action": next_action,
+            "output_path": str(output_path),
+            "part_path": str(output_path.with_suffix(output_path.suffix + ".part")),
+            "state_path": str(output_path.with_suffix(output_path.suffix + ".state.json")),
+        }
+    }
+
+
+def _command_error_payload(exc: BaseException) -> dict[str, Any]:
+    return {"error": {"kind": exc.__class__.__name__, "message": str(exc)}}
+
+
+def _emit_command_error(exc: BaseException, json_output: bool) -> None:
+    if json_output:
+        _print_json(_command_error_payload(exc))
+    else:
+        print(str(exc), file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -66,18 +192,26 @@ def main(argv: list[str] | None = None) -> int:
     loop_list = loop_sub.add_parser("list")
     loop_list.add_argument("--build-id", type=int)
     _add_json(loop_list)
+    loop_context = loop_sub.add_parser("context")
+    loop_context.add_argument("--loop-id", type=int, required=True)
+    loop_context.add_argument("--recent-limit", type=int, default=5)
+    _add_json(loop_context)
 
     log = top.add_parser("log")
     log_sub = log.add_subparsers(dest="action", required=True)
     log_import = log_sub.add_parser("import")
     log_import.add_argument("path")
     log_import.add_argument("--build-id", type=int, required=True)
+    log_import.add_argument("--loop-id", type=int)
     log_import.add_argument("--storage-dir", default="tune-data/blackbox-logs")
+    log_import.add_argument("--full-metadata", action="store_true", help="include full parsed Blackbox metadata in JSON output")
+    log_import.add_argument("--metadata-json-file", help="write full parsed Blackbox metadata to a file")
     _add_json(log_import)
     log_transfer = log_sub.add_parser("transfer")
     log_transfer.add_argument("--bridge-host", default="tuna-bridge-usb")
+    log_transfer.add_argument("--loop-id", type=int)
     log_transfer.add_argument("--output", required=True)
-    log_transfer.add_argument("--size", type=int, required=True)
+    log_transfer.add_argument("--size", type=int, help="raw MSC bytes to transfer; defaults to FC-reported Blackbox Log used_size before MSC mode")
     log_transfer.add_argument("--timeout", type=float, default=60.0)
     log_transfer.add_argument("--chunk-size", type=int, default=1024 * 1024, help="raw MSC bytes to request per Bridge range read")
     log_transfer.add_argument("--max-attempts", type=int, default=3, help="retry attempts for each raw MSC range read")
@@ -96,6 +230,17 @@ def main(argv: list[str] | None = None) -> int:
     log_analyze.add_argument("--output-json-file", help="write the full analysis JSON to a file and keep CLI JSON concise")
     log_analyze.add_argument("--full-json", action="store_true", help="print the full analysis JSON to stdout")
     _add_json(log_analyze)
+    log_decode_analyze = log_sub.add_parser("decode-analyze")
+    log_decode_analyze.add_argument("--log-id", type=int, required=True)
+    log_decode_analyze.add_argument("--output-dir", default="tune-data/decoded-logs")
+    log_decode_analyze.add_argument("--decoder-command", default="blackbox_decode")
+    log_decode_analyze.add_argument("--output-json-file", help="write the full analysis JSON to a file and keep CLI JSON concise")
+    log_decode_analyze.add_argument("--full-json", action="store_true", help="print the full analysis JSON to stdout")
+    _add_json(log_decode_analyze)
+    log_transfer_status = log_sub.add_parser("transfer-status")
+    log_transfer_status.add_argument("--bridge-host", default="tuna-bridge-usb")
+    log_transfer_status.add_argument("--timeout", type=float, default=8.0)
+    _add_json(log_transfer_status)
     segment_rows = log_sub.add_parser("segment-rows")
     segment_rows.add_argument("--log-id", type=int, required=True)
     segment_rows.add_argument("--segment-kind", required=True, choices=["high_rate", "throttle_punch", "chirp"])
@@ -170,16 +315,26 @@ def main(argv: list[str] | None = None) -> int:
     task_flight.add_argument("--reason", default="Need another Blackbox Log for tuning evidence.")
     task_flight.add_argument("--capture-goal", default="Capture a useful follow-up Blackbox Log for the current Tune Goal.")
     _add_json(task_flight)
+    task_fcs = task_sub.add_parser("request-fcs-connection")
+    task_fcs.add_argument("--build-id", type=int)
+    task_fcs.add_argument("--loop-id", type=int)
+    task_fcs.add_argument("--bridge-host", default="tuna-bridge-usb")
+    task_fcs.add_argument("--reason", default="FCS Bridge connection is required before the Tuning Agent can continue.")
+    task_fcs.add_argument("--next-step", default="Restore the FC/Bridge connection in USB CDC/MSP mode.")
+    _add_json(task_fcs)
     task_build = task_sub.add_parser("confirm-build")
     task_build.add_argument("--fc-snapshot-json", required=True)
     task_build.add_argument("--candidate-build-id", type=int)
-    task_build.add_argument("--reason", default="Confirm which Build is connected before starting or continuing a Loop.")
+    task_build.add_argument("--reason", default="")
     _add_json(task_build)
     task_goal = task_sub.add_parser("request-tune-goal")
     task_goal.add_argument("--build-id", type=int)
     task_goal.add_argument("--reason", default="Define the Tune Goal before starting a Loop.")
     _add_json(task_goal)
-    _add_json(task_sub.add_parser("list"))
+    task_list = task_sub.add_parser("list")
+    task_list.add_argument("--status", choices=("open", "resolved", "all"), default="all")
+    task_list.add_argument("--limit", type=int)
+    _add_json(task_list)
 
     notify = top.add_parser("notify")
     notify_sub = notify.add_subparsers(dest="action", required=True)
@@ -191,7 +346,18 @@ def main(argv: list[str] | None = None) -> int:
     notify_blackbox.add_argument("--reason", required=True)
     notify_blackbox.add_argument("--impact", default="")
     _add_json(notify_blackbox)
-    _add_json(notify_sub.add_parser("list"))
+    notify_list = notify_sub.add_parser("list")
+    notify_list.add_argument("--status", choices=("open", "acknowledged", "all"), default="all")
+    notify_list.add_argument("--limit", type=int)
+    _add_json(notify_list)
+
+    fcs = top.add_parser("fcs")
+    fcs_sub = fcs.add_subparsers(dest="action", required=True)
+    fcs_inspect = fcs_sub.add_parser("inspect")
+    fcs_inspect.add_argument("--bridge-host", default="tuna-bridge-usb")
+    fcs_inspect.add_argument("--port", type=int, default=5761)
+    fcs_inspect.add_argument("--timeout", type=float, default=2.5)
+    _add_json(fcs_inspect)
 
     web = top.add_parser("web")
     web.add_argument("--host", default="127.0.0.1")
@@ -225,12 +391,42 @@ def main(argv: list[str] | None = None) -> int:
             sql += " WHERE build_id = ?"
             params = (args.build_id,)
         _print_json([_row_to_dict(row) for row in conn.execute(sql + " ORDER BY id", params)])
+    elif args.area == "loop" and args.action == "context":
+        try:
+            payload = get_loop_context(conn, args.loop_id, recent_limit=args.recent_limit)
+        except ValueError as exc:
+            if args.json:
+                _print_json({"error": {"kind": exc.__class__.__name__, "message": str(exc)}})
+            else:
+                print(str(exc), file=sys.stderr)
+            return 1
+        _print_json(payload)
     elif args.area == "log" and args.action == "import":
         log_id = import_blackbox_log(conn, Path(args.path), build_id=args.build_id, storage_dir=args.storage_dir)
-        row = conn.execute("SELECT id AS log_id, parse_status, metadata_json, warnings_json FROM blackbox_logs WHERE id = ?", (log_id,)).fetchone()
+        row = conn.execute(
+            """
+            SELECT id AS log_id, build_id, managed_path, sha256, size_bytes, parse_status, imported_at, metadata_json, warnings_json
+            FROM blackbox_logs
+            WHERE id = ?
+            """,
+            (log_id,),
+        ).fetchone()
         payload = _row_to_dict(row)
-        payload["metadata"] = json.loads(payload.pop("metadata_json"))
+        metadata = json.loads(payload.pop("metadata_json"))
         payload["warnings"] = json.loads(payload.pop("warnings_json"))
+        payload["metadata_summary"] = _metadata_summary(metadata)
+        if args.metadata_json_file:
+            metadata_path = Path(args.metadata_json_file)
+            metadata_path.parent.mkdir(parents=True, exist_ok=True)
+            metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+            payload["metadata_json_file"] = str(metadata_path)
+        if args.full_metadata:
+            payload["metadata"] = metadata
+        update_loop_resume_cursor(
+            conn,
+            args.loop_id,
+            last_import={"log_id": log_id, "path": payload["managed_path"], "parse_status": payload["parse_status"]},
+        )
         _emit(payload, args.json)
     elif args.area == "log" and args.action == "transfer":
         def progress(event: dict[str, object]) -> None:
@@ -240,47 +436,56 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
 
-        payload = transfer_blackbox_log_from_bridge(
-            args.bridge_host,
-            output_path=Path(args.output),
-            size=args.size,
-            trigger_msc=not args.no_trigger_msc,
-            timeout_seconds=args.timeout,
-            resume=not args.no_resume,
-            chunk_size=args.chunk_size,
-            max_attempts=args.max_attempts,
-            progress=progress if args.progress else None,
+        output_path = Path(args.output)
+        try:
+            payload = transfer_blackbox_log_from_bridge(
+                args.bridge_host,
+                output_path=output_path,
+                size=args.size,
+                trigger_msc=not args.no_trigger_msc,
+                timeout_seconds=args.timeout,
+                resume=not args.no_resume,
+                chunk_size=args.chunk_size,
+                max_attempts=args.max_attempts,
+                progress=progress if args.progress else None,
+            )
+        except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
+            payload = _transfer_error_payload(exc, output_path=output_path)
+            if args.json:
+                _print_json(payload)
+            else:
+                print(payload["error"]["message"], file=sys.stderr)
+            update_loop_resume_cursor(conn, args.loop_id, last_transfer_error=payload["error"])
+            return 1
+        update_loop_resume_cursor(
+            conn,
+            args.loop_id,
+            last_transfer={
+                "output_path": payload["download"]["output_path"],
+                "written_bytes": payload["download"]["written_bytes"],
+                "starts_with_blackbox_header": payload["download"]["starts_with_blackbox_header"],
+            },
+            last_transfer_error={},
         )
         if args.json:
             _print_json(payload)
         else:
             print(payload["download"]["output_path"])
     elif args.area == "log" and args.action == "decode":
-        payload = decode_imported_log(conn, args.log_id, output_dir=args.output_dir, decoder_command=args.decoder_command)
+        try:
+            payload = decode_imported_log(conn, args.log_id, output_dir=args.output_dir, decoder_command=args.decoder_command)
+        except (OSError, RuntimeError, ValueError) as exc:
+            _emit_command_error(exc, args.json)
+            return 1
         _emit(payload, args.json)
     elif args.area == "log" and args.action == "analyze":
-        payload = analyze_imported_log(conn, args.log_id, csv_path=args.csv_path)
-        analysis_row = conn.execute(
-            "SELECT id, analyzed_at FROM log_analyses WHERE log_id = ? ORDER BY analyzed_at DESC, id DESC LIMIT 1",
-            (args.log_id,),
-        ).fetchone()
-        output_json_file = None
-        if args.output_json_file:
-            output_path = Path(args.output_json_file)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-            output_json_file = str(output_path)
-        concise_payload = {
-            "log_id": args.log_id,
-            "analysis_id": analysis_row["id"] if analysis_row else None,
-            "analyzed_at": analysis_row["analyzed_at"] if analysis_row else None,
-            "row_count": payload.get("row_count"),
-            "duration_seconds": payload.get("duration_seconds"),
-            "quality": payload.get("quality"),
-            "warnings": payload.get("warnings", []),
-            "analysis_json_file": output_json_file,
-            "full_analysis_stored": True,
-        }
+        try:
+            payload = analyze_imported_log(conn, args.log_id, csv_path=args.csv_path)
+        except (OSError, RuntimeError, ValueError) as exc:
+            _emit_command_error(exc, args.json)
+            return 1
+        output_json_file = _write_analysis_file(args.output_json_file, payload)
+        concise_payload = _analysis_concise_payload(conn, log_id=args.log_id, payload=payload, output_json_file=output_json_file)
         if args.json:
             _print_json(payload if args.full_json else concise_payload)
         else:
@@ -288,6 +493,42 @@ def main(argv: list[str] | None = None) -> int:
                 print(output_json_file)
             else:
                 print(payload["duration_seconds"])
+    elif args.area == "log" and args.action == "decode-analyze":
+        try:
+            decoded = decode_imported_log(conn, args.log_id, output_dir=args.output_dir, decoder_command=args.decoder_command)
+            payload = analyze_imported_log(conn, args.log_id, csv_path=decoded["csv_path"])
+        except (OSError, RuntimeError, ValueError) as exc:
+            _emit_command_error(exc, args.json)
+            return 1
+        output_json_file = _write_analysis_file(args.output_json_file, payload)
+        concise_payload = _analysis_concise_payload(
+            conn,
+            log_id=args.log_id,
+            payload=payload,
+            output_json_file=output_json_file,
+            csv_path=str(decoded["csv_path"]),
+        )
+        if args.json:
+            _print_json(payload if args.full_json else concise_payload)
+        else:
+            print(decoded["csv_path"])
+    elif args.area == "log" and args.action == "transfer-status":
+        try:
+            status_payload = read_bridge_status(args.bridge_host, timeout_seconds=args.timeout)
+            payload = {
+                "bridge_host": args.bridge_host,
+                "status_text": status_payload.text,
+                "usb_cdc_connected": status_payload.usb_cdc_connected,
+                "msc_raw_ready": status_payload.msc_raw_ready,
+            }
+        except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
+            payload = {"error": {"kind": exc.__class__.__name__, "message": str(exc), "retryable": True}}
+            if args.json:
+                _print_json(payload)
+            else:
+                print(str(exc), file=sys.stderr)
+            return 1
+        _print_json(payload)
     elif args.area == "log" and args.action == "segment-rows":
         fields = [field.strip() for field in args.fields.split(",")] if args.fields else None
         payload = get_segment_rows(
@@ -368,6 +609,16 @@ def main(argv: list[str] | None = None) -> int:
     elif args.area == "task" and args.action == "request-flight-capture":
         task_id = create_flight_capture_task(conn, build_id=args.build_id, loop_id=args.loop_id, reason=args.reason, capture_goal=args.capture_goal)
         _emit({"task_id": task_id, "kind": "request_flight_capture"}, args.json)
+    elif args.area == "task" and args.action == "request-fcs-connection":
+        task_id = create_fcs_connection_task(
+            conn,
+            build_id=args.build_id,
+            loop_id=args.loop_id,
+            bridge_host=args.bridge_host,
+            reason=args.reason,
+            next_step=args.next_step,
+        )
+        _emit({"task_id": task_id, "kind": "request_fcs_connection"}, args.json)
     elif args.area == "task" and args.action == "confirm-build":
         task_id = create_build_confirmation_task(
             conn,
@@ -380,7 +631,16 @@ def main(argv: list[str] | None = None) -> int:
         task_id = create_tune_goal_task(conn, build_id=args.build_id, reason=args.reason)
         _emit({"task_id": task_id, "kind": "request_tune_goal"}, args.json)
     elif args.area == "task" and args.action == "list":
-        _print_json([_row_to_dict(row) for row in conn.execute("SELECT * FROM operator_tasks ORDER BY status, created_at DESC, id DESC")])
+        sql = "SELECT * FROM operator_tasks"
+        params: list[Any] = []
+        if args.status != "all":
+            sql += " WHERE status = ?"
+            params.append(args.status)
+        sql += " ORDER BY status, created_at DESC, id DESC"
+        if args.limit is not None:
+            sql += " LIMIT ?"
+            params.append(args.limit)
+        _print_json([_task_payload(row) for row in conn.execute(sql, tuple(params))])
     elif args.area == "notify" and args.action == "blackbox-config-changed":
         notification_id = create_blackbox_config_notification(
             conn,
@@ -393,7 +653,27 @@ def main(argv: list[str] | None = None) -> int:
         )
         _emit({"notification_id": notification_id, "kind": "blackbox_config_changed"}, args.json)
     elif args.area == "notify" and args.action == "list":
-        _print_json([_row_to_dict(row) for row in conn.execute("SELECT * FROM operator_notifications ORDER BY status, created_at DESC, id DESC")])
+        sql = "SELECT * FROM operator_notifications"
+        params: list[Any] = []
+        if args.status != "all":
+            sql += " WHERE status = ?"
+            params.append(args.status)
+        sql += " ORDER BY status, created_at DESC, id DESC"
+        if args.limit is not None:
+            sql += " LIMIT ?"
+            params.append(args.limit)
+        _print_json([_notification_payload(row) for row in conn.execute(sql, tuple(params))])
+    elif args.area == "fcs" and args.action == "inspect":
+        try:
+            payload = inspect_fcs(args.bridge_host, port=args.port, timeout_seconds=args.timeout)
+        except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
+            payload = {"error": {"kind": exc.__class__.__name__, "message": str(exc), "retryable": True}}
+            if args.json:
+                _print_json(payload)
+            else:
+                print(str(exc), file=sys.stderr)
+            return 1
+        _print_json(payload)
     elif args.area == "web":
         from tune.web.app import create_app
         create_app(args.db).run(host=args.host, port=args.port)

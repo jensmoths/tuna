@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from tune.cli.main import main
 
@@ -27,6 +29,24 @@ class TuneCliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         return json.loads(out.getvalue())
 
+    def run_cli_json_with_code(self, *args: str):
+        out = StringIO()
+        with redirect_stdout(out):
+            code = main(["--db", str(self.db), *args, "--json"])
+        return code, json.loads(out.getvalue())
+
+    def test_python_module_entrypoint_shows_help(self):
+        result = subprocess.run(
+            [sys.executable, "-m", "tune", "--help"],
+            cwd=Path.cwd(),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("Tune helper tool", result.stdout)
+
     def test_agent_friendly_cli_flow(self):
         self.run_cli_json("db", "init")
         build = self.run_cli_json("build", "create", "5 inch", "--fc-snapshot-json", '{"fc":"BTFL"}')
@@ -39,6 +59,7 @@ class TuneCliTests(unittest.TestCase):
             str(build["build_id"]),
             "--storage-dir",
             str(self.root / "logs"),
+            "--full-metadata",
         )
         self.assertEqual(log["parse_status"], "readable")
         self.assertEqual(log["metadata"]["pids"]["roll"], [45, 80, 40])
@@ -93,6 +114,7 @@ class TuneCliTests(unittest.TestCase):
             "download": {
                 "output_path": str(output),
                 "starts_with_blackbox_header": True,
+                "written_bytes": 1024,
             },
             "operator_next_step": "Power-cycle/reset the FC back to USB CDC/MSP mode before further FC operations.",
         }
@@ -121,6 +143,61 @@ class TuneCliTests(unittest.TestCase):
             max_attempts=3,
             progress=None,
         )
+
+    def test_log_transfer_size_is_optional_for_discovery_path(self):
+        output = self.root / "flight.bbl"
+        payload = {
+            "download": {
+                "output_path": str(output),
+                "starts_with_blackbox_header": True,
+                "written_bytes": 1024,
+            },
+            "operator_next_step": "Power-cycle/reset the FC back to USB CDC/MSP mode before further FC operations.",
+        }
+        with patch("tune.cli.main.transfer_blackbox_log_from_bridge", return_value=payload) as transfer:
+            result = self.run_cli_json(
+                "log",
+                "transfer",
+                "--bridge-host",
+                "bridge.local",
+                "--output",
+                str(output),
+                "--timeout",
+                "12",
+            )
+
+        self.assertEqual(result, payload)
+        transfer.assert_called_once_with(
+            "bridge.local",
+            output_path=output,
+            size=None,
+            trigger_msc=True,
+            timeout_seconds=12.0,
+            resume=True,
+            chunk_size=1024 * 1024,
+            max_attempts=3,
+            progress=None,
+        )
+
+    def test_log_transfer_json_error_is_structured(self):
+        output = self.root / "flight.bbl"
+        with patch("tune.cli.main.transfer_blackbox_log_from_bridge", side_effect=TimeoutError("bridge status timed out")):
+            code, result = self.run_cli_json_with_code(
+                "log",
+                "transfer",
+                "--bridge-host",
+                "bridge.local",
+                "--output",
+                str(output),
+                "--size",
+                "1048576",
+            )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(result["error"]["kind"], "TimeoutError")
+        self.assertEqual(result["error"]["failure_stage"], "bridge_status")
+        self.assertTrue(result["error"]["retryable"])
+        self.assertIn("recommended_next_action", result["error"])
 
     def test_log_analyze_json_is_concise_and_can_write_full_json_file(self):
         self.run_cli_json("db", "init")
@@ -160,6 +237,71 @@ class TuneCliTests(unittest.TestCase):
         self.assertNotIn("ranges", result)
         self.assertIn("ranges", json.loads(full_json.read_text()))
 
+    def test_log_decode_analyze_runs_in_sequence(self):
+        self.run_cli_json("db", "init")
+        build = self.run_cli_json("build", "create", "5 inch")
+        log = self.run_cli_json(
+            "log",
+            "import",
+            "reference-logs/btfl_001.bbl",
+            "--build-id",
+            str(build["build_id"]),
+            "--storage-dir",
+            str(self.root / "logs"),
+        )
+        csv_path = self.root / "decoded.csv"
+        analysis = {"row_count": 1, "duration_seconds": 0.0, "quality": {"usable": False}, "warnings": []}
+        with patch("tune.cli.main.decode_imported_log", return_value={"log_id": log["log_id"], "csv_path": str(csv_path)}) as decode:
+            with patch("tune.cli.main.analyze_imported_log", return_value=analysis) as analyze:
+                result = self.run_cli_json("log", "decode-analyze", "--log-id", str(log["log_id"]))
+
+        decode.assert_called_once()
+        analyze.assert_called_once_with(ANY, log["log_id"], csv_path=str(csv_path))
+        self.assertEqual(result["csv_path"], str(csv_path))
+        self.assertEqual(result["row_count"], 1)
+
+    def test_log_analyze_without_decoded_csv_returns_json_error(self):
+        self.run_cli_json("db", "init")
+        build = self.run_cli_json("build", "create", "5 inch")
+        log = self.run_cli_json(
+            "log",
+            "import",
+            "reference-logs/btfl_001.bbl",
+            "--build-id",
+            str(build["build_id"]),
+            "--storage-dir",
+            str(self.root / "logs"),
+        )
+
+        code, result = self.run_cli_json_with_code("log", "analyze", "--log-id", str(log["log_id"]))
+
+        self.assertEqual(code, 1)
+        self.assertEqual(result["error"]["kind"], "ValueError")
+        self.assertIn("no decoded CSV", result["error"]["message"])
+
+    def test_log_import_json_is_concise_by_default_and_can_write_metadata(self):
+        self.run_cli_json("db", "init")
+        build = self.run_cli_json("build", "create", "5 inch")
+        metadata_file = self.root / "metadata.json"
+
+        result = self.run_cli_json(
+            "log",
+            "import",
+            "reference-logs/btfl_001.bbl",
+            "--build-id",
+            str(build["build_id"]),
+            "--storage-dir",
+            str(self.root / "logs"),
+            "--metadata-json-file",
+            str(metadata_file),
+        )
+
+        self.assertEqual(result["parse_status"], "readable")
+        self.assertNotIn("metadata", result)
+        self.assertIn("metadata_summary", result)
+        self.assertEqual(result["metadata_json_file"], str(metadata_file))
+        self.assertEqual(json.loads(metadata_file.read_text())["pids"]["roll"], [45, 80, 40])
+
     def test_request_flight_capture_cli_records_operator_task(self):
         self.run_cli_json("db", "init")
         result = self.run_cli_json(
@@ -182,7 +324,31 @@ class TuneCliTests(unittest.TestCase):
         payload = json.loads(tasks[0]["payload_json"])
         self.assertEqual(payload["capture_goal"], "Capture propwash recovery maneuvers")
         self.assertIn("pilot_instructions", payload)
-        self.assertIn("post_flight_steps", payload)
+        self.assertIn("operator_post_flight_steps", payload)
+        self.assertIn("tuning_agent_follow_up_steps", payload)
+        self.assertIn("captured_needs_transfer", payload["decision_options"])
+        self.assertNotIn("imported_log_id", payload["decision_options"])
+
+    def test_request_fcs_connection_cli_records_operator_task(self):
+        self.run_cli_json("db", "init")
+        result = self.run_cli_json(
+            "task",
+            "request-fcs-connection",
+            "--build-id",
+            "1",
+            "--loop-id",
+            "2",
+            "--bridge-host",
+            "tuna-bridge-usb",
+            "--reason",
+            "Bridge timed out during Post-flight Transfer",
+        )
+
+        self.assertEqual(result["kind"], "request_fcs_connection")
+        tasks = self.run_cli_json("task", "list", "--status", "open", "--limit", "1")
+        self.assertEqual(tasks[0]["id"], result["task_id"])
+        self.assertEqual(tasks[0]["payload"]["bridge_host"], "tuna-bridge-usb")
+        self.assertEqual(json.loads(tasks[0]["payload_json"])["loop_id"], 2)
 
     def test_confirm_build_cli_records_operator_task(self):
         self.run_cli_json("db", "init")
@@ -201,6 +367,7 @@ class TuneCliTests(unittest.TestCase):
         payload = json.loads(tasks[0]["payload_json"])
         self.assertEqual(payload["candidate_build_id"], 3)
         self.assertEqual(payload["fc_snapshot"]["fc_variant"], "BTFL")
+        self.assertEqual(payload["reason"], "")
 
     def test_request_tune_goal_cli_records_operator_task(self):
         self.run_cli_json("db", "init")
@@ -238,6 +405,26 @@ class TuneCliTests(unittest.TestCase):
         payload = json.loads(notifications[0]["payload_json"])
         self.assertFalse(payload["requires_operator_approval"])
         self.assertEqual(payload["settings"], {"debug_mode": "CHIRP"})
+
+    def test_loop_context_compacts_state(self):
+        self.run_cli_json("db", "init")
+        build = self.run_cli_json("build", "create", "5 inch", "--fc-snapshot-json", '{"fc_variant":"BTFL"}')
+        loop = self.run_cli_json("loop", "create", "--build-id", str(build["build_id"]), "--tune-goal", "reduce propwash")
+        self.run_cli_json("task", "request-flight-capture", "--build-id", str(build["build_id"]), "--loop-id", str(loop["loop_id"]))
+
+        context = self.run_cli_json("loop", "context", "--loop-id", str(loop["loop_id"]))
+
+        self.assertEqual(context["loop"]["id"], loop["loop_id"])
+        self.assertEqual(context["build"]["fc_snapshot"], {"fc_variant": "BTFL"})
+        self.assertEqual(context["open_tasks"][0]["kind"], "request_flight_capture")
+
+    def test_fcs_inspect_cli_delegates_to_probe_service(self):
+        payload = {"identity": {"fc_variant": "BTFL"}, "blackbox_storage": {"used_size": 42}}
+        with patch("tune.cli.main.inspect_fcs", return_value=payload) as inspect:
+            result = self.run_cli_json("fcs", "inspect", "--bridge-host", "bridge.local", "--timeout", "3")
+
+        self.assertEqual(result, payload)
+        inspect.assert_called_once_with("bridge.local", port=5761, timeout_seconds=3.0)
 
 
 if __name__ == "__main__":

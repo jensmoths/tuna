@@ -40,6 +40,24 @@ Use the project terms exactly:
 - Do not edit the SQLite database directly. Use `tune` commands or Tuna services.
 - Do not treat `tune` as the workflow brain. `tune` records and reports facts.
 
+## Fast path for normal Loop operation
+
+Use this checklist before broader discovery:
+
+1. Read compact state first:
+   `python3 -m tune --db tune.sqlite3 loop context --loop-id <id> --json`
+2. If hardware is connected, inspect it through Tuna/FCS:
+   `python3 -m tune --db tune.sqlite3 fcs inspect --bridge-host <host> --json`
+3. Create needed **Operator Tasks** with CLI subcommands, not Python snippets.
+4. Use `python3 -m tune --db tune.sqlite3 log transfer ... --json` for **Post-flight Transfer**.
+5. Import, decode, and analyze with concise commands:
+   `python3 -m tune --db tune.sqlite3 log import ... --json`
+   `python3 -m tune --db tune.sqlite3 log decode-analyze --log-id <id> --json`
+
+Do not read source code during normal **Loop** operation. If syntax is unclear,
+use `python3 -m tune --help` or subcommand `--help`. Source inspection is only
+for implementing/debugging Tuna itself.
+
 ## Core rules
 
 - A **Loop** has one fixed **Build** and one fixed **Tune Goal**.
@@ -68,13 +86,13 @@ Use FCS/MSP to extract what is available from the FC when hardware is connected:
 Then create a `confirm_build` **Operator Task** if human confirmation is needed. The Operator Console records whether the snapshot matches an existing **Build**, requires a new **Build**, or cannot be confirmed; the **Tuning Agent** decides the next workflow action and records the resulting **Build** with `tune`.
 
 ```bash
-tune --db tune.sqlite3 task confirm-build --fc-snapshot-json '{"fc_variant":"BTFL"}' --json
+python3 -m tune --db tune.sqlite3 task confirm-build --fc-snapshot-json '{"fc_variant":"BTFL"}' --json
 ```
 
 Example:
 
 ```bash
-tune --db tune.sqlite3 build create "5-inch freestyle" --fc-snapshot-json '{"fc_variant":"BTFL"}' --operator-notes "Operator-confirmed Build" --json
+python3 -m tune --db tune.sqlite3 build create "5-inch freestyle" --fc-snapshot-json '{"fc_variant":"BTFL"}' --operator-notes "Operator-confirmed Build" --json
 ```
 
 ### 2. Establish or confirm Loop
@@ -82,35 +100,34 @@ tune --db tune.sqlite3 build create "5-inch freestyle" --fc-snapshot-json '{"fc_
 Create a **Loop** only after the **Build** and **Tune Goal** are clear. If the **Tune Goal** is unclear, create a `request_tune_goal` **Operator Task** and use the response before creating the **Loop**.
 
 ```bash
-tune --db tune.sqlite3 task request-tune-goal --build-id 1 --json
+python3 -m tune --db tune.sqlite3 task request-tune-goal --build-id 1 --json
 ```
 
 ```bash
-tune --db tune.sqlite3 loop create --build-id 1 --tune-goal "reduce propwash while preserving freestyle response" --json
+python3 -m tune --db tune.sqlite3 loop create --build-id 1 --tune-goal "reduce propwash while preserving freestyle response" --json
 ```
 
 Check existing Loops when needed:
 
 ```bash
-tune --db tune.sqlite3 loop list --build-id 1 --json
+python3 -m tune --db tune.sqlite3 loop list --build-id 1 --json
 ```
 
 ### 3. Transfer Blackbox Logs through FCS
 
 Use FCS tools for **Post-flight Transfer** from FC/Bridge to the **Host Computer**. Do not use raw Bridge/protocol access unless specifically debugging FCS/Bridge behavior.
 
-Preferred v1 workflow for ESP32-S3 USB-host **Bridge** raw MSC transfer: use `tune log transfer`. The CLI performs Bridge/FC mode validation, triggers MSC mode when needed, downloads with resume sidecars, trims leading padding before the Blackbox header, and validates that the resulting file starts with `H Product:Blackbox`.
+Preferred v1 workflow for ESP32-S3 USB-host **Bridge** MSC transfer: use `tune log transfer`. The CLI performs Bridge/FC mode validation, triggers MSC mode when needed, prefers the actual mounted Betaflight `.bbl` file when available, falls back to raw MSC download with resume sidecars, trims leading padding before the Blackbox header for raw fallback, and validates that the resulting file starts with `H Product:Blackbox`.
 
 ```bash
-tune --db tune.sqlite3 log transfer \
+python3 -m tune --db tune.sqlite3 log transfer \
   --bridge-host tuna-bridge-usb \
   --timeout 60 \
-  --size 2097152 \
   --output transferred-logs/current-flight.bbl \
   --json
 ```
 
-Use a stable file name under `transferred-logs/`. For a full transfer, choose `--size` from FC/MSC capacity or known log bounds when available. If the transfer times out or resets, repeat the same command; do not delete the `.part` or `.state.json` files unless intentionally starting over.
+Use a stable file name under `transferred-logs/`. When starting from USB CDC/MSP mode, omit `--size`; `tune log transfer` discovers the FC-reported Blackbox storage `used_size` before triggering MSC mode. Use `--size` only as an override/debug escape hatch, such as when the Bridge is already in MSC raw mode and MSP storage discovery is unavailable. If the transfer times out or resets, repeat the same command; do not delete the `.part` or `.state.json` files unless intentionally starting over.
 
 Required success evidence in JSON:
 
@@ -130,11 +147,18 @@ PYTHONPATH=fcs-host python3 fcs-host/fcs_blackbox_erase.py tuna-bridge-usb \
 
 Treat erase failure as a follow-up operational issue, not as a reason to discard the retained **Blackbox Log** on the **Host Computer**.
 
-Fallback path: if the ESP32-S3 raw MSC path is unavailable, use the slower read-only MSP dataflash downloader through FCS tooling and then Import the resulting file:
+Do not use MSP dataflash download as a fallback **Post-flight Transfer** path; it
+is too slow for Tuna's normal workflow. If raw MSC transfer is unavailable,
+create a `request_fcs_connection` **Operator Task** or report the hardware
+limitation rather than attempting MSP download.
 
 ```bash
-PYTHONPATH=fcs-host python3 fcs-host/fcs_blackbox_download.py tuna-bridge-usb \
-  --output transferred-logs/current-flight.bbl
+python3 -m tune --db tune.sqlite3 task request-fcs-connection \
+  --build-id 1 \
+  --loop-id 1 \
+  --bridge-host tuna-bridge-usb \
+  --reason "FCS Bridge is unavailable for Post-flight Transfer" \
+  --json
 ```
 
 ### 4. Import transferred Blackbox Logs
@@ -142,17 +166,24 @@ PYTHONPATH=fcs-host python3 fcs-host/fcs_blackbox_download.py tuna-bridge-usb \
 The **Tuning Agent** performs **Import** after transfer. Import records the file, hashes it, deduplicates it, associates it with the **Build**, and extracts metadata.
 
 ```bash
-tune --db tune.sqlite3 log import transferred-logs/example.bbl --build-id 1 --json
+python3 -m tune --db tune.sqlite3 log import transferred-logs/example.bbl --build-id 1 --json
 ```
 
 Use parsed metadata and warnings to decide whether a **Blackbox Log** is useful, deferred, or diagnostic-only. Do not discard files just because parsing fails.
 
+For a resolved `request_flight_capture` **Operator Task**:
+
+- `captured_needs_transfer`: perform **Post-flight Transfer** and **Import**.
+- `capture_failed`: do not transfer; decide whether to request another capture or report the blocker.
+
 When deeper analysis is needed, decode and analyze imported logs:
 
 ```bash
-tune --db tune.sqlite3 log decode --log-id 1 --json
-tune --db tune.sqlite3 log analyze --log-id 1 --json
+python3 -m tune --db tune.sqlite3 log decode-analyze --log-id 1 --json
 ```
+
+Do not run decode and analyze in parallel. If you need separate steps, wait for
+`log decode` to finish before `log analyze`.
 
 If `blackbox_decode` is not installed, report that dependency clearly and fall back to available import metadata only.
 
@@ -165,13 +196,13 @@ Use chirp as an optional diagnostic capture, not a normal replacement for all fl
 Choose imported **Blackbox Logs** for the **Tuning Iteration**. You may defer logs or reuse prior logs as reference input.
 
 ```bash
-tune --db tune.sqlite3 iteration create --loop-id 1 --log-id 1 --json
+python3 -m tune --db tune.sqlite3 iteration create --loop-id 1 --log-id 1 --json
 ```
 
 Check for an open **Tuning Iteration**:
 
 ```bash
-tune --db tune.sqlite3 iteration current --loop-id 1 --json
+python3 -m tune --db tune.sqlite3 iteration current --loop-id 1 --json
 ```
 
 ### 6. Record Diagnosis
@@ -179,7 +210,7 @@ tune --db tune.sqlite3 iteration current --loop-id 1 --json
 Record one **Diagnosis** for a successful **Tuning Iteration**. The **Diagnosis** should explain observations, evidence, uncertainty, and why change or no change is recommended.
 
 ```bash
-tune --db tune.sqlite3 diagnosis record --iteration-id 1 --body "Observed pitch bounce-back after sharp inputs..." --confidence medium --evidence-json '{"logs":[1]}' --json
+python3 -m tune --db tune.sqlite3 diagnosis record --iteration-id 1 --body "Observed pitch bounce-back after sharp inputs..." --confidence medium --evidence-json '{"logs":[1]}' --json
 ```
 
 ### 7. Propose Tune Update or no change
@@ -201,7 +232,7 @@ Bad:
 Record the proposal:
 
 ```bash
-tune --db tune.sqlite3 update propose --iteration-id 1 --build-id 1 --settings-json '{"d_pitch":48}' --cli-text 'set d_pitch = 48' --json
+python3 -m tune --db tune.sqlite3 update propose --iteration-id 1 --build-id 1 --settings-json '{"d_pitch":48}' --cli-text 'set d_pitch = 48' --json
 ```
 
 If recommending no change, record a **Diagnosis** explaining why and do not invent a **Tune Update**.
@@ -213,25 +244,33 @@ Do not apply a **Tune Update** without **Operator** approval.
 After approval, the Operator Console records `approved_pending_write`. Find approved writes with:
 
 ```bash
-tune --db tune.sqlite3 update pending-writes --json
+python3 -m tune --db tune.sqlite3 update pending-writes --json
 ```
 
 For each pending write, verify state and FC identity, perform FCS write-back, then record success:
 
 ```bash
-tune --db tune.sqlite3 update apply --update-id 1 --json
+PYTHONPATH=fcs-host python3 fcs-host/fcs_write_cli.py tuna-bridge-usb \
+  --cli-file approved-tune-update.cli \
+  --confirm write-fc-cli
+```
+
+The confirmation string is intentionally explicit. Use this only for Operator-approved **Tune Updates** after verifying FC identity and current state.
+
+```bash
+python3 -m tune --db tune.sqlite3 update apply --update-id 1 --json
 ```
 
 or failure:
 
 ```bash
-tune --db tune.sqlite3 update record-write-failure --update-id 1 --failure "Bridge connection failed" --json
+python3 -m tune --db tune.sqlite3 update record-write-failure --update-id 1 --failure "Bridge connection failed" --json
 ```
 
 After rejection:
 
 ```bash
-tune --db tune.sqlite3 update reject --update-id 1 --reason "Operator wants another confirmation flight" --json
+python3 -m tune --db tune.sqlite3 update reject --update-id 1 --reason "Operator wants another confirmation flight" --json
 ```
 
 ## Query commands
@@ -239,11 +278,11 @@ tune --db tune.sqlite3 update reject --update-id 1 --reason "Operator wants anot
 Use JSON output for agent-readable state:
 
 ```bash
-tune --db tune.sqlite3 status --json
-tune --db tune.sqlite3 build list --json
-tune --db tune.sqlite3 loop list --json
-tune --db tune.sqlite3 log list --build-id 1 --json
-tune --db tune.sqlite3 iteration current --loop-id 1 --json
+python3 -m tune --db tune.sqlite3 loop context --loop-id 1 --json
+python3 -m tune --db tune.sqlite3 status --json
+python3 -m tune --db tune.sqlite3 task list --status open --json
+python3 -m tune --db tune.sqlite3 task list --status resolved --limit 5 --json
+python3 -m tune --db tune.sqlite3 notify list --status open --json
 ```
 
 ## Safety and quality checks

@@ -18,13 +18,12 @@ This supports **Blackbox Log** discovery and transfer from FC dataflash. After a
 - `fcs_bridge/msp.py` — MSP v1/v2 frame helpers and Betaflight dataflash parsers
 - `fcs_bridge/msp_client.py` — reusable synchronous MSP client
 - `fcs_bridge/fc_discovery.py` — FC identity and Blackbox storage discovery
-- `fcs_bridge/blackbox_transfer.py` — MSP dataflash byte-range transfer and erase helpers
+- `fcs_bridge/blackbox_transfer.py` — MSP erase helper for post-import FC Blackbox storage cleanup
 - `fcs_connectivity_tracer.py` — CLI smoke tracer against a real Bridge
 - `fc_passthrough_smoke.py` — MSP passthrough smoke test against a real FC
 - `fcs_blackbox_storage_probe.py` — read-only Blackbox storage discovery
-- `fcs_blackbox_read_probe.py` — small diagnostic byte-range read
-- `fcs_blackbox_download.py` — full FC-reported used dataflash download to `.bbl`
 - `fcs_blackbox_erase.py` — erase transferred FC Blackbox Log storage after validated host-side transfer/import
+- `fcs_write_cli.py` — apply Betaflight CLI text through FCS after Operator-approved **Tune Update** write-back
 - `fcs_msc_raw_download.py` — raw Betaflight USB MSC transfer helper; trims leading padding before the Blackbox header
 - `tests/test_bridge_transport.py` — stdlib `unittest` contract tests using a local single-client fake Bridge
 
@@ -73,24 +72,6 @@ This read-only probe asks the flight controller what **Blackbox Log** storage ex
 PYTHONPATH=fcs-host python3 fcs-host/fcs_blackbox_storage_probe.py tuna-bridge
 ```
 
-## Read a small Blackbox Log dataflash range
-
-This read-only probe transfers a small byte range from FC dataflash and retains it on the **Host Computer** as a diagnostic artifact.
-
-```bash
-PYTHONPATH=fcs-host python3 fcs-host/fcs_blackbox_read_probe.py tuna-bridge --size 1024
-```
-
-## Download a complete Blackbox Log dataflash image
-
-This transfers FC-reported used dataflash bytes over MSP into a `.bbl` file on the **Host Computer**. After validation and retention/import succeed, Tuna should erase the transferred FC copy through FCS. This path is useful as a fallback and diagnostic path, but it is much slower than USB MSC.
-
-```bash
-PYTHONPATH=fcs-host python3 fcs-host/fcs_blackbox_download.py tuna-bridge
-```
-
-The completed file is written under `transferred-logs/` and should be openable in Blackbox Explorer.
-
 ## Erase transferred FC Blackbox Log storage
 
 Only erase after Tuna has a validated retained **Blackbox Log** on the **Host Computer** and **Import** succeeded. The FC must be in USB CDC/MSP mode, so after MSC raw transfer the **Operator** must power-cycle/reset the FC before this command can run.
@@ -102,23 +83,29 @@ PYTHONPATH=fcs-host python3 fcs-host/fcs_blackbox_erase.py tuna-bridge-usb \
 
 The confirmation string is intentionally explicit because this erases FC Blackbox storage.
 
-Current downloader defaults:
+## Apply approved Betaflight CLI text
 
-- MSP version: `2`
-- chunk size: `512` bytes
-- progress interval: `262144` bytes
-
-Useful overrides:
+Only use this after the Operator Console has approved a **Tune Update** and the **Tuning Agent** has verified state and FC identity. The helper sends Betaflight CLI text through FCS and appends `save` when needed.
 
 ```bash
-PYTHONPATH=fcs-host python3 fcs-host/fcs_blackbox_download.py tuna-bridge --output transferred-logs/my-flight.bbl
-PYTHONPATH=fcs-host python3 fcs-host/fcs_blackbox_download.py tuna-bridge --size 1048576
-PYTHONPATH=fcs-host python3 fcs-host/fcs_blackbox_download.py tuna-bridge --msp-version 1 --chunk-size 240
+PYTHONPATH=fcs-host python3 fcs-host/fcs_write_cli.py tuna-bridge-usb \
+  --command "set d_pitch = 48" \
+  --confirm write-fc-cli
 ```
+
+For generated CLI artifacts:
+
+```bash
+PYTHONPATH=fcs-host python3 fcs-host/fcs_write_cli.py tuna-bridge-usb \
+  --cli-file approved-tune-update.cli \
+  --confirm write-fc-cli
+```
+
+After success, the **Tuning Agent** records `python3 -m tune --db tune.sqlite3 update apply --update-id ... --json`; after failure it records `python3 -m tune --db tune.sqlite3 update record-write-failure --update-id ... --failure ... --json`.
 
 ## Download from Betaflight USB MSC raw storage
 
-This is the preferred fast path for the ESP32-S3 USB-host Bridge. The FC is first put into Betaflight mass-storage mode, usually via CLI `msc`. The validated FC re-enumerates as `2e3c:5720` and exposes raw Blackbox storage, not a FAT filesystem with `.bbl` files. The Bridge command is therefore `MSC_GET_RAW [bytes]` or `MSC_GET_RAW [offset] [bytes]`, not `MSC_SCAN`.
+This is the preferred fast path for the ESP32-S3 USB-host Bridge. The FC is first put into Betaflight mass-storage mode, usually via CLI `msc`. When the Bridge can mount the Betaflight MSC filesystem, Tuna prefers the actual `.bbl` file exposed by Betaflight (typically one combined Blackbox Log artifact such as `btfl_all.bbl`). Raw sector transfer with `MSC_GET_RAW [bytes]` or `MSC_GET_RAW [offset] [bytes]` remains the fallback/debug path.
 
 Once the FC is in MSC mode and `STATUS_VERBOSE` reports `msc_raw=1`, download a raw range and trim leading padding before the Blackbox header:
 
@@ -126,16 +113,17 @@ Once the FC is in MSC mode and `STATUS_VERBOSE` reports `msc_raw=1`, download a 
 PYTHONPATH=fcs-host python3 fcs-host/fcs_msc_raw_download.py tuna-bridge --size 1048576
 ```
 
-For normal Tuna workflows, prefer the Tuning Agent-facing `tune` command because it validates mode state, can trigger MSC mode, downloads with resume, trims leading padding, and verifies the Blackbox header:
+For normal Tuna workflows, prefer the Tuning Agent-facing `python3 -m tune` command because it validates mode state, can trigger MSC mode, prefers a mounted MSC `.bbl` file when available, falls back to raw download with resume, trims leading padding, and verifies the Blackbox header:
 
 ```bash
-tune --db tune.sqlite3 log transfer \
+python3 -m tune --db tune.sqlite3 log transfer \
   --bridge-host tuna-bridge-usb \
   --timeout 60 \
-  --size 2097152 \
   --output transferred-logs/current-flight.bbl \
   --json
 ```
+
+When starting from USB CDC/MSP mode, omit `--size`; the command probes FC Blackbox storage through FCS/MSP and uses the reported `used_size` before triggering MSC mode. Keep `--size` as an override/debug option when the Bridge is already in MSC raw mode and MSP storage discovery is unavailable.
 
 The lower-level `fcs_msc_raw_download.py` helper writes under `transferred-logs/` by default. It searches for `H Product:Blackbox` and writes a trimmed `.bbl` unless `--keep-leading-padding` is used. It also keeps a `.part` plus `.state.json` sidecar so `--resume` can continue an interrupted transfer.
 
@@ -162,21 +150,88 @@ H Product:Blackbox flight data recorder by Nicholas Sherlock
 H Data version:2
 ```
 
+Additional Tuna-facing validation on 2026-06-06 with `tuna-bridge-usb`:
+
+```text
+FC CDC/MSP identity before transfer:
+  variant=BTFL
+  version=25.12.3
+  msp_api=1.47
+
+Blackbox storage before transfer:
+  dataflash_available=1
+  dataflash_supported=1
+  dataflash_ready=1
+  sector_count=256
+  total_size=16777216
+  used_size=868352
+
+python3 -m tune --db tune.sqlite3 log transfer --no-trigger-msc --size 868352 --chunk-size 262144:
+  raw_bytes_downloaded=868352
+  retries=1
+  header_offset=562176
+  written_bytes=306176
+  starts_with_blackbox_header=true
+
+python3 -m tune --db tune.sqlite3 log import:
+  log_id=2
+  parse_status=readable
+  firmware=Betaflight 2025.12.3-alpha (db7df6e48) AT32F435G
+
+python3 -m tune --db tune.sqlite3 log decode-analyze:
+  csv_path=tune-data/decoded-logs/log-2.csv
+  analysis_id=3
+  row_count=184
+  duration_seconds=0.090817
+  usable=false; warning=Blackbox Log duration is short for tuning analysis
+```
+
+During that run, an initial `python3 -m tune --db tune.sqlite3 log transfer` from USB CDC/MSP mode successfully caused the FC to re-enumerate into MSC raw mode, but the command timed out while polling status. Re-running `python3 -m tune --db tune.sqlite3 log transfer --no-trigger-msc` completed the **Post-flight Transfer** from the already-ready MSC raw state. After transfer, the FC remained in MSC mode and required Operator reset/power-cycle before further USB CDC/MSP operations.
+
+Follow-up hardware validation on 2026-06-06 cleared the remaining v1 FCS gates:
+
+```text
+FCS write-back smoke:
+  command: fcs_write_cli.py tuna-bridge-usb --command "set d_pitch = 46" --confirm write-fc-cli
+  result: write ok
+  transcript: FC entered CLI, accepted d_pitch set to 46, accepted save
+  post-write MSP smoke: variant=BTFL version=25.12.3 msp_api=1.47
+
+One-shot CDC/MSP -> MSC raw Post-flight Transfer:
+  initial_status: USB_CDC_CONNECTED, msc_raw=0
+  trigger_transcript: entered CLI, sent msc, FC restarted in mass storage mode
+  msc_status: USB_CDC_DISCONNECTED, msc_raw=1
+  raw_bytes_downloaded=868352
+  retries=0
+  header_offset=562176
+  written_bytes=306176
+  starts_with_blackbox_header=true
+
+Erase after validated transfer/import:
+  pre-erase storage: total_size=16777216 used_size=868352
+  command: fcs_blackbox_erase.py tuna-bridge-usb --confirm erase-transferred-blackbox-log
+  result: erase ok before_used_bytes=868352 after_used_bytes=0
+  follow-up storage probe: total_size=16777216 used_size=0
+```
+
 ## Current validation status
 
 Validated:
 
-- FCS host unit tests: `25/25 OK`
-- Tuna unit tests: `27/27 OK`
+- FCS host unit tests: `23/23 OK`
+- Tuna unit tests: `89/89 OK` with `pytest -q`
 - Bridge resolve/connect/disconnect
 - single-client rejection behavior
 - MSP v1/v2 frame handling
 - FC identity discovery: Betaflight `4.5.2`, variant `BTFL`, MSP API `1.46`
+- FC identity discovery: Betaflight `25.12.3`, variant `BTFL`, MSP API `1.47`
 - ESP32-S3 USB CDC Bridge path to Betaflight FC `2e3c:5740`
 - ESP32-S3 USB MSC raw path to Betaflight FC `2e3c:5720`
 - `STATUS_VERBOSE` full diagnostics without truncating MSC sector fields
 - `MSC_GET_RAW [bytes]` and `MSC_GET_RAW [offset] [bytes]` raw range reads
 - `tune log transfer` end-to-end validation while FC is already in MSC raw mode
+- `tune log transfer` of a real FC **Blackbox Log** from MSC raw mode, followed by Tuna **Import**, decode, and analysis
+- `tune log transfer` one-shot from USB CDC/MSP mode through automatic `msc` trigger into MSC raw transfer
 - Blackbox dataflash summary:
   - `dataflash_available=1`
   - `dataflash_supported=1`
@@ -184,26 +239,24 @@ Validated:
   - `sector_count=256`
   - `total_size=16777216`
   - `used_size=16777216`
-- 1 KiB read starts with `H Product:Blackbox flight data recorder`
-- MSP 64 KiB download succeeded as fallback
 - MSC raw 1 MiB transfer succeeded in about 4.3 seconds and produced a valid trimmed `.bbl` prefix
 - MSC raw resume helper validated from 1 MiB to 2 MiB raw bytes with a valid trimmed `.bbl` prefix
 - full 16 MiB MSC raw transfer succeeded as `transferred-logs/full-current-flight.bbl`, trimmed the Blackbox header at raw offset `562176`, produced a `16215040` byte `.bbl`, and was manually validated in Blackbox Explorer
 - production full-size MSC raw transfer with progress display, chunked range reads, resume sidecars, and per-chunk retry policy
+- partial real-log MSC raw transfer with one retry, `306176` byte trimmed `.bbl`, `log_id=2`, `analysis_id=3`
+- real FC write-back using `fcs_write_cli.py` with a no-op approved-value CLI command, followed by successful MSP smoke test
+- erasing transferred FC logs through FCS after successful validated host-side transfer/import, followed by storage probe showing `used_size=0`
 
 Not yet validated:
 
 - automatic retry/resume after an interrupted full download
-- erasing transferred FC logs through FCS after successful validated host-side transfer/import
 
 ## Known limitations
 
-- Betaflight Configurator warns MSP flash download is slow/error-prone; our path has the same class of limitation.
+- MSP dataflash transfer is intentionally not supported as a Tuna **Post-flight Transfer** fallback because it is too slow for the normal workflow.
 - Current D1 mini Bridge cannot use Betaflight USB mass-storage mode because it is not USB host-capable.
 - LilyGO T-Display-S3-AMOLED-1.64 bring-up required separate FC power; SY6970 OTG configuration succeeded, but the tested USB-C VBUS measurement stayed around 0.6V unloaded.
-- MSP dataflash transfer is slow; use MSC raw transfer where available.
-- `MSC_SCAN` expects FAT files and is not suitable for the validated Betaflight MSC target, which exposes raw Blackbox storage.
-- Raw MSC still starts by downloading from offset zero when no resume state exists. Future optimization can use metadata, scan results, or known storage/log bounds to avoid transferring unnecessary leading/trailing raw padding.
+- Raw MSC fallback still starts by downloading from offset zero when no resume state exists. Future optimization can use metadata, scan results, or known storage/log bounds to avoid transferring unnecessary leading/trailing raw padding.
 
 ## Future nice-to-have transfer improvements
 

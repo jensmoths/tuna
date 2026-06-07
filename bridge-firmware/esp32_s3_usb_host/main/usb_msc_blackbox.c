@@ -118,6 +118,47 @@ static esp_err_t copy_bbls_from_dir(const char *dir_path, int depth, int *copied
   return ESP_OK;
 }
 
+static esp_err_t list_bbls_from_dir(const char *dir_path, const char *rel_dir, int depth, usb_msc_blackbox_list_cb_t cb, void *ctx) {
+  if (depth > 4) return ESP_OK;
+  DIR *dir = opendir(dir_path);
+  if (!dir) return ESP_FAIL;
+
+  struct dirent *entry;
+  while ((entry = readdir(dir)) != NULL) {
+    const char *name = entry->d_name;
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
+
+    char path[256];
+    int written = snprintf(path, sizeof(path), "%s/%s", dir_path, name);
+    if (written < 0 || written >= (int)sizeof(path)) continue;
+
+    char rel_path[256];
+    if (rel_dir && rel_dir[0]) {
+      written = snprintf(rel_path, sizeof(rel_path), "%s/%s", rel_dir, name);
+    } else {
+      written = snprintf(rel_path, sizeof(rel_path), "%s", name);
+    }
+    if (written < 0 || written >= (int)sizeof(rel_path)) continue;
+
+    struct stat st;
+    if (stat(path, &st) != 0) continue;
+    if (S_ISDIR(st.st_mode)) {
+      list_bbls_from_dir(path, rel_path, depth + 1, cb, ctx);
+    } else if (S_ISREG(st.st_mode) && has_bbl_extension(name)) {
+      cb(rel_path, (size_t)st.st_size, ctx);
+    }
+  }
+  closedir(dir);
+  return ESP_OK;
+}
+
+static bool safe_relative_name(const char *name) {
+  if (!name || !name[0]) return false;
+  if (name[0] == '/') return false;
+  if (strstr(name, "..")) return false;
+  return true;
+}
+
 static int find_usb_addr_by_handle(msc_host_device_handle_t handle) {
   if (s_device == handle) return 0;
   return -1;
@@ -176,6 +217,12 @@ static esp_err_t mount_device(uint8_t address) {
   return ESP_OK;
 }
 
+static esp_err_t ensure_msc_ready(void) {
+  if (s_device) return ESP_OK;
+  if (s_diag.last_address == 0) return ESP_ERR_INVALID_STATE;
+  return mount_device(s_diag.last_address);
+}
+
 static void unmount_device(void) {
   if (s_vfs) {
     msc_host_vfs_unregister(s_vfs);
@@ -230,6 +277,7 @@ esp_err_t usb_msc_blackbox_init(void) {
 esp_err_t usb_msc_blackbox_scan_and_copy(void) {
   if (!s_lock) return ESP_ERR_INVALID_STATE;
   xSemaphoreTake(s_lock, portMAX_DELAY);
+  if (!s_mounted) ensure_msc_ready();
   bool mounted = s_mounted;
   xSemaphoreGive(s_lock);
   if (!mounted) return ESP_ERR_INVALID_STATE;
@@ -239,9 +287,45 @@ esp_err_t usb_msc_blackbox_scan_and_copy(void) {
   return err;
 }
 
+esp_err_t usb_msc_blackbox_list_logs(usb_msc_blackbox_list_cb_t cb, void *ctx) {
+  if (cb == NULL) return ESP_ERR_INVALID_ARG;
+  if (!s_lock) return ESP_ERR_INVALID_STATE;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  if (!s_mounted) ensure_msc_ready();
+  bool mounted = s_mounted;
+  xSemaphoreGive(s_lock);
+  if (!mounted) return ESP_ERR_INVALID_STATE;
+  return list_bbls_from_dir(MSC_MOUNT_PATH, "", 0, cb, ctx);
+}
+
+esp_err_t usb_msc_blackbox_open_log(const char *name, FILE **file, size_t *size) {
+  if (file == NULL || size == NULL) return ESP_ERR_INVALID_ARG;
+  *file = NULL;
+  *size = 0;
+  if (!safe_relative_name(name)) return ESP_ERR_INVALID_ARG;
+  if (!s_lock) return ESP_ERR_INVALID_STATE;
+  xSemaphoreTake(s_lock, portMAX_DELAY);
+  if (!s_mounted) ensure_msc_ready();
+  bool mounted = s_mounted;
+  xSemaphoreGive(s_lock);
+  if (!mounted) return ESP_ERR_INVALID_STATE;
+
+  char path[256];
+  int written = snprintf(path, sizeof(path), "%s/%s", MSC_MOUNT_PATH, name);
+  if (written < 0 || written >= (int)sizeof(path)) return ESP_ERR_INVALID_ARG;
+  struct stat st;
+  if (stat(path, &st) != 0 || !S_ISREG(st.st_mode) || !has_bbl_extension(name)) return ESP_ERR_NOT_FOUND;
+  FILE *opened = fopen(path, "rb");
+  if (!opened) return ESP_FAIL;
+  *file = opened;
+  *size = (size_t)st.st_size;
+  return ESP_OK;
+}
+
 void usb_msc_blackbox_get_diag(usb_msc_blackbox_diag_t *diag) {
   if (diag == NULL) return;
   if (s_lock) xSemaphoreTake(s_lock, portMAX_DELAY);
+  if (!s_device && s_diag.last_address != 0) ensure_msc_ready();
   s_diag.mounted = s_mounted;
   s_diag.raw_ready = s_raw_ready;
   *diag = s_diag;
@@ -252,6 +336,7 @@ esp_err_t usb_msc_blackbox_get_raw_size(size_t *size) {
   if (size == NULL) return ESP_ERR_INVALID_ARG;
   if (!s_lock) return ESP_ERR_INVALID_STATE;
   xSemaphoreTake(s_lock, portMAX_DELAY);
+  if (!s_device && s_diag.last_address != 0) ensure_msc_ready();
   if (!s_device || !s_raw_ready || s_diag.sector_size == 0) {
     xSemaphoreGive(s_lock);
     return ESP_ERR_INVALID_STATE;
@@ -265,6 +350,7 @@ esp_err_t usb_msc_blackbox_read_raw_sector(size_t sector, void *data, size_t siz
   if (data == NULL) return ESP_ERR_INVALID_ARG;
   if (!s_lock) return ESP_ERR_INVALID_STATE;
   xSemaphoreTake(s_lock, portMAX_DELAY);
+  if (!s_device && s_diag.last_address != 0) ensure_msc_ready();
   if (!s_device || !s_raw_ready) {
     xSemaphoreGive(s_lock);
     return ESP_ERR_INVALID_STATE;

@@ -7,7 +7,6 @@ MSP_API_VERSION = 1
 MSP_FC_VARIANT = 2
 MSP_FC_VERSION = 3
 MSP_DATAFLASH_SUMMARY = 70
-MSP_DATAFLASH_READ = 71
 MSP_DATAFLASH_ERASE = 72
 MSP_SDCARD_SUMMARY = 79
 MSP_BLACKBOX_CONFIG = 80
@@ -203,43 +202,3 @@ def parse_dataflash_summary(payload: bytes) -> dict[str, int | bool]:
         "used_size": int.from_bytes(payload[9:13], "little"),
     }
 
-
-def build_dataflash_read_payload(
-    address: int, size: int, *, allow_compression: bool = False
-) -> bytes:
-    if not 0 <= address <= 0xFFFFFFFF:
-        raise ValueError("dataflash read address must fit in uint32")
-    if not 0 <= size <= 0xFFFF:
-        raise ValueError("dataflash read size must fit in uint16")
-
-    return (
-        address.to_bytes(4, "little")
-        + size.to_bytes(2, "little")
-        + bytes([1 if allow_compression else 0])
-    )
-
-
-def parse_dataflash_read(payload: bytes) -> dict[str, int | bytes]:
-    if len(payload) < 7:
-        raise MspProtocolError("MSP_DATAFLASH_READ payload too short")
-
-    address = int.from_bytes(payload[0:4], "little")
-    read_size = int.from_bytes(payload[4:6], "little")
-    compression_type = payload[6]
-    data = payload[7:]
-
-    if compression_type != 0:
-        raise MspProtocolError(
-            f"unsupported MSP_DATAFLASH_READ compression type {compression_type}"
-        )
-    if len(data) < read_size:
-        raise MspProtocolError(
-            f"MSP_DATAFLASH_READ payload shorter than declared read size: {len(data)} < {read_size}"
-        )
-
-    return {
-        "address": address,
-        "read_size": read_size,
-        "compression_type": compression_type,
-        "data": data[:read_size],
-    }

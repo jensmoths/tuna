@@ -23,6 +23,10 @@ class BridgeStatus:
     def msc_raw_ready(self) -> bool:
         return "msc_raw=1" in self.text
 
+    @property
+    def msc_mounted(self) -> bool:
+        return "msc_mounted=1" in self.text
+
 
 def _recv_line(sock: socket.socket) -> bytes:
     line = bytearray()
@@ -47,6 +51,19 @@ def _read_until_quiet(sock: socket.socket, *, quiet_seconds: float) -> bytes:
         chunks.append(data)
         deadline = time.time() + quiet_seconds
     return b"".join(chunks)
+
+
+def _read_control_lines_until_done(sock: socket.socket) -> list[str]:
+    lines: list[str] = []
+    while True:
+        raw = _recv_line(sock)
+        if not raw:
+            break
+        line = raw.decode(errors="replace").rstrip("\r\n")
+        lines.append(line)
+        if line == "OK" or line.startswith("ERR "):
+            break
+    return lines
 
 
 def _part_path(output_path: Path) -> Path:
@@ -107,6 +124,88 @@ def _write_resume_state(output_path: Path, raw_bytes_downloaded: int, header_off
     _state_path(output_path).write_text(json.dumps({"raw_bytes_downloaded": raw_bytes_downloaded, "header_offset": header_offset}))
 
 
+def discover_blackbox_transfer_size(host: str, *, timeout_seconds: float = 8.0) -> int:
+    """Return FC-reported used Blackbox Log storage bytes through FCS/MSP."""
+
+    from tune.services.fcs_probe import inspect_fcs
+
+    payload = inspect_fcs(host, timeout_seconds=timeout_seconds)
+    storage = payload["blackbox_storage"]
+    if not storage["dataflash_available"] or not storage["dataflash_supported"] or not storage["dataflash_ready"]:
+        raise RuntimeError(f"Blackbox Log storage is not ready for transfer size discovery: {storage}")
+    used_size = int(storage["used_size"])
+    if used_size <= 0:
+        raise RuntimeError(f"FC reports no Blackbox Log bytes to transfer: {storage}")
+    return used_size
+
+
+def _list_msc_blackbox_files(host: str, *, port: int = 5762, timeout_seconds: float = 5.0) -> list[tuple[str, int]]:
+    with socket.create_connection((host, port), timeout=timeout_seconds) as sock:
+        sock.settimeout(timeout_seconds)
+        sock.sendall(b"MSC_LIST\n")
+        lines = _read_control_lines_until_done(sock)
+    if not lines or lines[-1] != "OK":
+        return []
+    files: list[tuple[str, int]] = []
+    for line in lines[:-1]:
+        if not line.startswith("MSC_LOG "):
+            continue
+        rest = line[len("MSC_LOG ") :]
+        name, _, size_text = rest.rpartition(" ")
+        if not name or not size_text.isdigit():
+            continue
+        if name.lower().endswith(".bbl"):
+            files.append((name, int(size_text)))
+    return files
+
+
+def _download_msc_blackbox_file(
+    host: str,
+    *,
+    name: str,
+    output_path: Path,
+    port: int = 5762,
+    timeout_seconds: float = 15.0,
+) -> dict[str, object]:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with socket.create_connection((host, port), timeout=timeout_seconds) as sock:
+        sock.settimeout(timeout_seconds)
+        sock.sendall(f"MSC_GET {name}\n".encode("utf-8"))
+        header = _recv_line(sock)
+        if not header.startswith(b"DATA "):
+            raise RuntimeError(f"unexpected Bridge reply {header!r}")
+        total = int(header.split()[1])
+        data = bytearray()
+        while len(data) < total:
+            chunk = sock.recv(min(8192, total - len(data)))
+            if not chunk:
+                break
+            data.extend(chunk)
+    if len(data) != total:
+        raise RuntimeError(f"short read got={len(data)} expected={total}")
+    output_path.write_bytes(data)
+    return {
+        "method": "msc_file",
+        "name": name,
+        "output_path": str(output_path),
+        "written_bytes": len(data),
+        "starts_with_blackbox_header": bytes(data).startswith(BLACKBOX_HEADER),
+    }
+
+
+def download_preferred_msc_file(
+    host: str,
+    *,
+    output_path: Path,
+    timeout_seconds: float = 15.0,
+) -> dict[str, object] | None:
+    files = _list_msc_blackbox_files(host, timeout_seconds=min(timeout_seconds, 5.0))
+    if not files:
+        return None
+    name, _size = max(files, key=lambda item: item[1])
+    return _download_msc_blackbox_file(host, name=name, output_path=output_path, timeout_seconds=timeout_seconds)
+
+
 def _read_msc_raw_range(
     host: str,
     *,
@@ -142,12 +241,17 @@ def download_msc_raw(
     timeout_seconds: float = 60.0,
     resume: bool = True,
     keep_leading_padding: bool = False,
+    output_size: int | None = None,
+    stop_at_next_header: bool = False,
     chunk_size: int = 1024 * 1024,
     max_attempts: int = 3,
+    recover_msc_raw: Callable[[], None] | None = None,
     progress: Callable[[dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
     if size < 0:
         raise ValueError("size must be non-negative")
+    if output_size is not None and output_size < 0:
+        raise ValueError("output_size must be non-negative")
     if chunk_size <= 0:
         raise ValueError("chunk_size must be positive")
     if max_attempts <= 0:
@@ -160,8 +264,12 @@ def download_msc_raw(
     progress_events: list[dict[str, object]] = []
     chunks_completed = 0
     retries = 0
-    while raw_bytes_downloaded < size:
-        requested = min(chunk_size, size - raw_bytes_downloaded)
+    next_header_offset = -1
+    target_raw_size = size
+    if output_size is not None and header_offset >= 0:
+        target_raw_size = max(target_raw_size, header_offset + output_size)
+    while raw_bytes_downloaded < target_raw_size:
+        requested = min(chunk_size, target_raw_size - raw_bytes_downloaded)
         last_error: Exception | None = None
         for attempt in range(1, max_attempts + 1):
             try:
@@ -180,6 +288,11 @@ def download_msc_raw(
                         f"MSC raw read failed after {max_attempts} attempts at offset {raw_bytes_downloaded}: {exc}"
                     ) from exc
                 retries += 1
+                if recover_msc_raw is not None:
+                    try:
+                        recover_msc_raw()
+                    except (OSError, RuntimeError, TimeoutError) as recovery_exc:
+                        last_error = recovery_exc
                 time.sleep(min(0.25 * attempt, 2.0))
         else:  # pragma: no cover - defensive; for-loop either breaks or raises.
             raise RuntimeError(f"MSC raw read failed at offset {raw_bytes_downloaded}: {last_error}")
@@ -192,26 +305,39 @@ def download_msc_raw(
         raw = part_path.read_bytes()
         if header_offset < 0:
             header_offset = raw.find(BLACKBOX_HEADER)
-        output_bytes = raw if keep_leading_padding or header_offset < 0 else raw[header_offset:]
+        if output_size is not None and header_offset >= 0:
+            target_raw_size = max(target_raw_size, header_offset + output_size)
+        if stop_at_next_header and header_offset >= 0:
+            next_header_offset = raw.find(BLACKBOX_HEADER, header_offset + len(BLACKBOX_HEADER))
+        output_end = next_header_offset if next_header_offset >= 0 else None
+        output_bytes = raw if keep_leading_padding or header_offset < 0 else raw[header_offset:output_end]
         output_path.write_bytes(output_bytes)
         _write_resume_state(output_path, raw_bytes_downloaded, header_offset)
 
         event = {
             "raw_bytes_downloaded": raw_bytes_downloaded,
-            "requested_size": size,
+            "requested_size": target_raw_size,
             "written_bytes": len(output_bytes),
             "header_offset": header_offset,
             "chunks_completed": chunks_completed,
             "retries": retries,
+            "next_header_offset": next_header_offset,
         }
         progress_events.append(event)
         if progress is not None:
             progress(event)
+        if next_header_offset >= 0:
+            break
 
     raw = part_path.read_bytes()
     if header_offset < 0:
         header_offset = raw.find(BLACKBOX_HEADER)
-    output_bytes = raw if keep_leading_padding or header_offset < 0 else raw[header_offset:]
+    if output_size is not None and header_offset >= 0:
+        target_raw_size = max(target_raw_size, header_offset + output_size)
+    if stop_at_next_header and header_offset >= 0 and next_header_offset < 0:
+        next_header_offset = raw.find(BLACKBOX_HEADER, header_offset + len(BLACKBOX_HEADER))
+    output_end = next_header_offset if next_header_offset >= 0 else None
+    output_bytes = raw if keep_leading_padding or header_offset < 0 else raw[header_offset:output_end]
     output_path.write_bytes(output_bytes)
     _write_resume_state(output_path, raw_bytes_downloaded, header_offset)
 
@@ -220,7 +346,10 @@ def download_msc_raw(
         "part_path": str(part_path),
         "state_path": str(_state_path(output_path)),
         "raw_bytes_downloaded": raw_bytes_downloaded,
+        "requested_size": target_raw_size,
         "header_offset": header_offset,
+        "next_header_offset": next_header_offset,
+        "stopped_at_next_header": next_header_offset >= 0,
         "written_bytes": len(output_bytes),
         "starts_with_blackbox_header": output_bytes.startswith(BLACKBOX_HEADER),
         "chunk_size": chunk_size,
@@ -234,7 +363,7 @@ def transfer_blackbox_log_from_bridge(
     host: str,
     *,
     output_path: Path,
-    size: int,
+    size: int | None = None,
     trigger_msc: bool = True,
     timeout_seconds: float = 60.0,
     resume: bool = True,
@@ -245,22 +374,63 @@ def transfer_blackbox_log_from_bridge(
     initial = read_bridge_status(host, timeout_seconds=min(timeout_seconds, 8.0))
     transcript = ""
     msc_status = initial
+    resolved_size = size
     if not initial.msc_raw_ready:
         if not trigger_msc:
             raise RuntimeError(f"Bridge is not in MSC raw mode: {initial.text}")
         if not initial.usb_cdc_connected:
             raise RuntimeError(f"FC is not in CDC/MSP mode and MSC raw is not ready: {initial.text}")
+        if resolved_size is None:
+            resolved_size = discover_blackbox_transfer_size(host, timeout_seconds=min(timeout_seconds, 8.0))
         transcript = trigger_msc_mode(host, timeout_seconds=min(timeout_seconds, 8.0))
         msc_status = wait_for_msc_raw(host, timeout_seconds=min(timeout_seconds, 8.0))
+    file_download: dict[str, object] | None = None
+    if msc_status.msc_mounted:
+        try:
+            file_download = download_preferred_msc_file(
+                host,
+                output_path=output_path,
+                timeout_seconds=min(timeout_seconds, 15.0),
+            )
+        except (OSError, RuntimeError, TimeoutError):
+            file_download = None
+
+    if file_download is not None:
+        if not file_download["starts_with_blackbox_header"]:
+            raise RuntimeError(f"transferred MSC file does not start with Blackbox header: {file_download}")
+        return {
+            "initial_status": initial.text,
+            "msc_status": msc_status.text,
+            "trigger_transcript": transcript,
+            "download": file_download,
+            "operator_next_step": "Power-cycle/reset the FC back to USB CDC/MSP mode before further FC operations.",
+        }
+
+    if resolved_size is None:
+        raise ValueError("--size is required when MSC file transfer is unavailable and MSP storage discovery is unavailable")
+
+    def recover_msc_raw() -> None:
+        status = read_bridge_status(host, timeout_seconds=min(timeout_seconds, 8.0))
+        if status.msc_raw_ready:
+            return
+        if not trigger_msc:
+            raise RuntimeError(f"Bridge left MSC raw mode during transfer: {status.text}")
+        if not status.usb_cdc_connected:
+            wait_for_msc_raw(host, timeout_seconds=min(timeout_seconds, 8.0))
+            return
+        trigger_msc_mode(host, timeout_seconds=min(timeout_seconds, 8.0))
+        wait_for_msc_raw(host, timeout_seconds=min(timeout_seconds, 8.0))
 
     download = download_msc_raw(
         host,
         output_path=output_path,
-        size=size,
-        timeout_seconds=timeout_seconds,
+        size=resolved_size,
+        timeout_seconds=min(timeout_seconds, 15.0),
         resume=resume,
         chunk_size=chunk_size,
         max_attempts=max_attempts,
+        output_size=resolved_size,
+        recover_msc_raw=recover_msc_raw,
         progress=progress,
     )
     if not download["starts_with_blackbox_header"]:
@@ -271,5 +441,6 @@ def transfer_blackbox_log_from_bridge(
         "msc_status": msc_status.text,
         "trigger_transcript": transcript,
         "download": download,
+        "fallback_reason": "MSC file transfer unavailable; used raw MSC range transfer.",
         "operator_next_step": "Power-cycle/reset the FC back to USB CDC/MSP mode before further FC operations.",
     }
