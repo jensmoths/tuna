@@ -168,6 +168,86 @@ class OperatorWebTests(unittest.TestCase):
         cursor = json.loads(session["resume_cursor_json"])
         self.assertEqual(cursor["last_resolved_operator_task"]["id"], task_id)
 
+    def test_chat_prototype_shows_tasks_and_agent_status_without_trace_log(self):
+        build_id = create_build(self.conn, "5 inch")
+        loop_id = create_loop(self.conn, build_id, "baseline")
+        create_task(
+            self.conn,
+            "request_fcs_connection",
+            "Connect FCS",
+            body="Connect the FCS Bridge so the Tuning Agent can inspect the FC.",
+            payload={"loop_id": loop_id},
+        )
+        self.conn.execute(
+            """
+            INSERT INTO tuning_agent_sessions (loop_id, status, debug_trace)
+            VALUES (?, ?, ?)
+            """,
+            (loop_id, "Inspecting Tuna state", "[2026-06-07T00:00:00Z] sent initial prompt to Pi RPC"),
+        )
+        self.conn.commit()
+
+        client = create_app(self.db_path).test_client()
+        page = client.get(f"/loops/{loop_id}/chat")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"<dt>Loop</dt><dd>#", page.data)
+        self.assertIn(b"Loop workbench", client.get("/").data)
+        self.assertIn(b"Inspecting Tuna state", page.data)
+        self.assertIn(b"Connect FCS", page.data)
+        self.assertIn(b"Operator response", page.data)
+        self.assertNotIn(b"Supervisor trace", page.data)
+        self.assertNotIn(b"sent initial prompt to Pi RPC", page.data)
+
+    def test_loop_events_streams_chat_state(self):
+        build_id = create_build(self.conn, "5 inch")
+        loop_id = create_loop(self.conn, build_id, "baseline")
+        create_task(self.conn, "request_fcs_connection", "Connect FCS", payload={"loop_id": loop_id})
+        client = create_app(self.db_path).test_client()
+
+        response = client.get(f"/loops/{loop_id}/events?once=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "text/event-stream")
+        self.assertIn(b"id: ", response.data)
+        self.assertIn(b"event: state", response.data)
+        self.assertIn(b"html", response.data)
+        self.assertIn(b"Connect FCS", response.data)
+
+    def test_chat_task_response_redirects_back_to_chat(self):
+        build_id = create_build(self.conn, "5 inch")
+        loop_id = create_loop(self.conn, build_id, "baseline")
+        task_id = create_task(self.conn, "request_fcs_connection", "Connect FCS", payload={"loop_id": loop_id})
+        client = create_app(self.db_path).test_client()
+
+        response = client.post(
+            f"/tasks/{task_id}/resolve-generic",
+            data={"decision": "completed", "notes": "Connected", "next": f"/loops/{loop_id}/chat"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["Location"], f"/loops/{loop_id}/chat")
+
+    def test_chat_shows_loop_selector_and_confirm_build_response(self):
+        build_id = create_build(self.conn, "5 inch")
+        loop_id = create_loop(self.conn, build_id, "baseline")
+        create_loop(self.conn, build_id, "follow-up")
+        create_task(
+            self.conn,
+            "confirm_build",
+            "Confirm connected Build",
+            body="Confirm whether the flight-controller snapshot belongs to an existing Build.",
+            payload={"loop_id": loop_id, "candidate_build_id": build_id, "fc_snapshot": {"fc_variant": "BTFL"}},
+        )
+        client = create_app(self.db_path).test_client()
+
+        page = client.get(f"/loops/{loop_id}/chat")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b">Switch</button>", page.data)
+        self.assertIn(b"Snapshot matches an existing Build", page.data)
+        self.assertIn(b"resolve-build-confirmation", page.data)
+
     def test_blackbox_config_notification_shows_change_and_acknowledges(self):
         notification_id = create_blackbox_config_notification(
             self.conn,

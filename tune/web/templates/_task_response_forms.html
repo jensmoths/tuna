@@ -1,0 +1,37 @@
+{% if task.kind == 'request_flight_capture' %}
+<form class="inline-form" method="post" action="/tasks/{{ task.id }}/resolve-flight-capture">
+  <input type="hidden" name="next" value="{{ next_url }}">
+  <label><input type="radio" name="decision" value="captured_needs_transfer" required> Blackbox Log was captured; Tuning Agent should perform Post-flight Transfer and Import</label>
+  <label><input type="radio" name="decision" value="capture_failed"> Capture failed or no usable Blackbox Log is available</label>
+  <label>Operator notes</label><textarea name="notes"></textarea><button type="submit">Send response</button>
+</form>
+{% elif task.kind == 'request_tune_goal' %}
+<form class="inline-form" method="post" action="/tasks/{{ task.id }}/resolve-tune-goal">
+  <input type="hidden" name="next" value="{{ next_url }}">
+  <label>Tune Goal</label><textarea name="tune_goal" required></textarea><label>Operator notes</label><textarea name="notes"></textarea><button type="submit">Send response</button>
+</form>
+{% elif task.kind == 'review_tune_update' %}
+<form class="inline-form" method="post" action="/tasks/{{ task.id }}/approve-write">
+  <input type="hidden" name="next" value="{{ next_url }}">
+  <label><input type="checkbox" name="safety_confirmed" value="yes" required> I confirm the correct Build/FC is connected and safe for FC write-back.</label><button type="submit">Approve for Tuning Agent write-back</button>
+</form>
+<form class="inline-form" method="post" action="/tasks/{{ task.id }}/reject">
+  <input type="hidden" name="next" value="{{ next_url }}">
+  <label>Rejection reason</label><textarea name="reason" required></textarea><button type="submit">Reject Tune Update</button>
+</form>
+{% elif task.kind == 'confirm_build' %}
+<form class="inline-form" method="post" action="/tasks/{{ task.id }}/resolve-build-confirmation">
+  <input type="hidden" name="next" value="{{ next_url }}">
+  <label><input type="radio" name="decision" value="matches_existing_build" required> Snapshot matches an existing Build</label>
+  <label>Existing Build</label><select name="build_id"><option value="">Select Build</option>{% for build in builds %}<option value="{{ build.id }}"{% if build.id == task.payload.candidate_build_id %} selected{% endif %}>#{{ build.id }} {{ build.name }}</option>{% endfor %}</select>
+  <label><input type="radio" name="decision" value="create_new_build"> This should be a new Build</label>
+  <label>New Build name</label><input name="build_name">
+  <label><input type="radio" name="decision" value="cannot_confirm"> Cannot confirm yet</label>
+  <label>Operator notes</label><textarea name="notes"></textarea><button type="submit">Send response</button>
+</form>
+{% else %}
+<form class="inline-form" method="post" action="/tasks/{{ task.id }}/resolve-generic">
+  <input type="hidden" name="next" value="{{ next_url }}">
+  <label><input type="radio" name="decision" value="completed" checked> Completed / available</label><label><input type="radio" name="decision" value="cannot_complete"> Cannot complete / unavailable</label><label>Operator notes</label><textarea name="notes"></textarea><button type="submit">Send response</button>
+</form>
+{% endif %}

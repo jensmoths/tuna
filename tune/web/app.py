@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import time
+import hashlib
 from pathlib import Path
 
-from flask import Flask, redirect, render_template, request, url_for
+from flask import Flask, Response, redirect, render_template, request, stream_with_context, url_for
 from markupsafe import Markup, escape
 
 from tune.services.builds import create_build
@@ -62,6 +64,121 @@ def _utc_time_tag(value: object) -> Markup:
     if not iso.endswith("Z") and "+" not in iso[10:] and "-" not in iso[10:]:
         iso += "Z"
     return Markup(f'<time class="local-time" data-utc="{escape(iso)}">{escape(text)} UTC</time>')
+
+
+def _redirect_after_form(default_endpoint: str, **values):
+    next_url = request.form.get("next", "").strip()
+    if next_url.startswith("/") and not next_url.startswith("//"):
+        return redirect(next_url)
+    return redirect(url_for(default_endpoint, **values))
+
+
+def _task_loop_id(conn, task: dict) -> int | None:
+    payload = task.get("payload") or {}
+    loop_id = payload.get("loop_id")
+    if loop_id is not None:
+        return int(loop_id)
+    update_id = payload.get("tune_update_id")
+    if update_id is None:
+        return None
+    row = conn.execute(
+        """
+        SELECT i.loop_id
+        FROM tune_updates u
+        JOIN tuning_iterations i ON i.id = u.iteration_id
+        WHERE u.id = ?
+        """,
+        (int(update_id),),
+    ).fetchone()
+    return int(row["loop_id"]) if row else None
+
+
+def _chat_state(conn, loop_id: int, agent_process_running: bool = False) -> dict:
+    loop = _dict(
+        conn.execute(
+            """
+            SELECT l.*, b.name AS build_name
+            FROM loops l
+            JOIN builds b ON b.id = l.build_id
+            WHERE l.id = ?
+            """,
+            (loop_id,),
+        ).fetchone()
+    )
+    if not loop:
+        return {}
+    agent_session = _dict(conn.execute("SELECT * FROM tuning_agent_sessions WHERE loop_id = ?", (loop_id,)).fetchone())
+    loops = conn.execute(
+        """
+        SELECT l.*, b.name AS build_name
+        FROM loops l
+        JOIN builds b ON b.id = l.build_id
+        ORDER BY l.status = 'open' DESC, l.created_at DESC, l.id DESC
+        """
+    ).fetchall()
+    builds = conn.execute("SELECT id, name FROM builds ORDER BY name, id").fetchall()
+    tasks = []
+    for row in conn.execute("SELECT * FROM operator_tasks ORDER BY created_at, id").fetchall():
+        task = _dict(row)
+        task["payload"] = json.loads(task["payload_json"] or "{}")
+        if _task_loop_id(conn, task) == loop_id:
+            tasks.append(task)
+    notifications = []
+    for row in conn.execute("SELECT * FROM operator_notifications ORDER BY created_at, id").fetchall():
+        notification = _dict(row)
+        notification["payload"] = json.loads(notification["payload_json"] or "{}")
+        if notification["payload"].get("loop_id") == loop_id:
+            notifications.append(notification)
+    events = []
+    if agent_session:
+        events.append(
+            {
+                "kind": "agent_status",
+                "title": "Tuning Agent status",
+                "body": f"Tuning Agent is {agent_session['status']}.",
+                "created_at": agent_session["updated_at"],
+            }
+        )
+    for task in tasks:
+        body = task["body"]
+        if task["status"] == "resolved" and task.get("response_json"):
+            body = f"Operator responded: {task['response_json']}"
+        events.append(
+            {
+                "kind": "operator_task",
+                "title": f"Operator Task #{task['id']}: {task['title']}",
+                "body": body,
+                "created_at": task["resolved_at"] or task["created_at"],
+                "status": task["status"],
+                "task_id": task["id"],
+            }
+        )
+    for notification in notifications:
+        events.append(
+            {
+                "kind": "operator_notification",
+                "title": f"Operator Notification #{notification['id']}: {notification['title']}",
+                "body": notification["body"],
+                "created_at": notification["acknowledged_at"] or notification["created_at"],
+                "status": notification["status"],
+                "notification_id": notification["id"],
+            }
+        )
+    events.sort(key=lambda event: (event.get("created_at") or "", event.get("title") or ""))
+    open_tasks = [task for task in tasks if task["status"] == "open"]
+    open_notifications = [notification for notification in notifications if notification["status"] == "open"]
+    return {
+        "loop": loop,
+        "agent_session": agent_session,
+        "agent_process_running": agent_process_running,
+        "loops": loops,
+        "builds": builds,
+        "tasks": tasks,
+        "notifications": notifications,
+        "current_task": open_tasks[0] if open_tasks else None,
+        "open_notifications": open_notifications,
+        "events": events,
+    }
 
 
 def create_app(db_path: str | Path) -> Flask:
@@ -237,6 +354,75 @@ def create_app(db_path: str | Path) -> Flask:
             thinking_level_choices=["off", "minimal", "low", "medium", "high", "xhigh"],
         )
 
+    @app.get("/chat")
+    def chat_index():
+        conn = db()
+        loop = conn.execute(
+            """
+            SELECT id FROM loops
+            ORDER BY status = 'open' DESC, created_at DESC, id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        if loop:
+            return redirect(url_for("loop_chat", loop_id=loop["id"]))
+        builds = conn.execute("SELECT * FROM builds ORDER BY name, id").fetchall()
+        return render_template("chat.html", state=None, builds=builds)
+
+    @app.get("/loops/<int:loop_id>/chat")
+    def loop_chat(loop_id: int):
+        conn = db()
+        state = _chat_state(conn, loop_id, agent_process_running=supervisor().is_loop_running(loop_id))
+        if not state:
+            return "Loop not found", 404
+        return render_template(
+            "chat.html",
+            state=state,
+            builds=[],
+            default_bridge_host=app.config["TUNE_DEFAULT_BRIDGE_HOST"],
+            default_pi_model=app.config["TUNE_DEFAULT_PI_MODEL"],
+            default_thinking_level=app.config["TUNE_DEFAULT_THINKING_LEVEL"],
+            pi_model_choices=PI_MODEL_CHOICES,
+            thinking_level_choices=["off", "minimal", "low", "medium", "high", "xhigh"],
+        )
+
+    @app.get("/loops/<int:loop_id>/events")
+    def loop_events(loop_id: int):
+        once = request.args.get("once") == "1"
+
+        @stream_with_context
+        def stream():
+            last_payload = ""
+            while True:
+                conn = db()
+                state = _chat_state(conn, loop_id, agent_process_running=supervisor().is_loop_running(loop_id))
+                payload = json.dumps(
+                    {
+                        "agent_status": state.get("agent_session", {}).get("status") if state.get("agent_session") else "not started",
+                        "html": render_template(
+                            "_chat_workbench.html",
+                            state=state,
+                            loop=state.get("loop"),
+                            default_bridge_host=app.config["TUNE_DEFAULT_BRIDGE_HOST"],
+                            default_pi_model=app.config["TUNE_DEFAULT_PI_MODEL"],
+                            default_thinking_level=app.config["TUNE_DEFAULT_THINKING_LEVEL"],
+                            pi_model_choices=PI_MODEL_CHOICES,
+                            thinking_level_choices=["off", "minimal", "low", "medium", "high", "xhigh"],
+                        ),
+                    },
+                    sort_keys=True,
+                    default=str,
+                )
+                if payload != last_payload:
+                    last_payload = payload
+                    event_id = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+                    yield f"id: {event_id}\nevent: state\ndata: {payload}\n\n"
+                if once:
+                    break
+                time.sleep(2)
+
+        return Response(stream(), mimetype="text/event-stream")
+
     @app.post("/loops/<int:loop_id>/tuning-agent/start")
     def start_tuning_agent(loop_id: int):
         conn = db()
@@ -251,7 +437,7 @@ def create_app(db_path: str | Path) -> Flask:
         if thinking_level not in THINKING_LEVEL_CHOICES:
             return "Unsupported Pi thinking level", 400
         supervisor().start_loop(loop_id, bridge_host=bridge_host, pi_model=pi_model, thinking_level=thinking_level)
-        return redirect(url_for("loop_detail", loop_id=loop_id))
+        return _redirect_after_form("loop_detail", loop_id=loop_id)
 
     @app.post("/loops/<int:loop_id>/tuning-agent/continue")
     def continue_tuning_agent(loop_id: int):
@@ -267,12 +453,12 @@ def create_app(db_path: str | Path) -> Flask:
         if thinking_level not in THINKING_LEVEL_CHOICES:
             return "Unsupported Pi thinking level", 400
         supervisor().continue_loop(loop_id, bridge_host=bridge_host, pi_model=pi_model, thinking_level=thinking_level)
-        return redirect(url_for("loop_detail", loop_id=loop_id))
+        return _redirect_after_form("loop_detail", loop_id=loop_id)
 
     @app.post("/loops/<int:loop_id>/tuning-agent/abort")
     def abort_tuning_agent(loop_id: int):
         supervisor().abort_loop(loop_id)
-        return redirect(url_for("loop_detail", loop_id=loop_id))
+        return _redirect_after_form("loop_detail", loop_id=loop_id)
 
     @app.post("/loops/<int:loop_id>/close")
     def close_loop_from_web(loop_id: int):
@@ -319,7 +505,7 @@ def create_app(db_path: str | Path) -> Flask:
         approve_for_write(conn, update_id)
         resolve_task(conn, task_id, {"decision": "approved_for_write", "safety_confirmed": True, "tune_update_id": update_id})
         supervisor().notify_operator_task_resolved(task_id)
-        return redirect(url_for("tasks"))
+        return _redirect_after_form("tasks")
 
     @app.post("/tasks/<int:task_id>/reject")
     def reject_update(task_id: int):
@@ -335,7 +521,7 @@ def create_app(db_path: str | Path) -> Flask:
         reject(conn, update_id, reason)
         resolve_task(conn, task_id, {"decision": "rejected", "reason": reason, "tune_update_id": update_id})
         supervisor().notify_operator_task_resolved(task_id)
-        return redirect(url_for("tasks"))
+        return _redirect_after_form("tasks")
 
     @app.post("/tasks/<int:task_id>/resolve-flight-capture")
     def resolve_flight_capture(task_id: int):
@@ -354,7 +540,7 @@ def create_app(db_path: str | Path) -> Flask:
         response = {"decision": decision, "notes": notes}
         resolve_task(conn, task_id, response)
         supervisor().notify_operator_task_resolved(task_id)
-        return redirect(url_for("tasks"))
+        return _redirect_after_form("tasks")
 
     @app.post("/tasks/<int:task_id>/resolve-build-confirmation")
     def resolve_build_confirmation(task_id: int):
@@ -395,7 +581,7 @@ def create_app(db_path: str | Path) -> Flask:
                     conn.commit()
         resolve_task(conn, task_id, response)
         supervisor().notify_operator_task_resolved(task_id)
-        return redirect(url_for("tasks"))
+        return _redirect_after_form("tasks")
 
     @app.post("/tasks/<int:task_id>/resolve-tune-goal")
     def resolve_tune_goal(task_id: int):
@@ -411,7 +597,7 @@ def create_app(db_path: str | Path) -> Flask:
         notes = request.form.get("notes", "").strip()
         resolve_task(conn, task_id, {"decision": "provided", "tune_goal": tune_goal, "notes": notes})
         supervisor().notify_operator_task_resolved(task_id)
-        return redirect(url_for("tasks"))
+        return _redirect_after_form("tasks")
 
     @app.post("/tasks/<int:task_id>/resolve-generic")
     def resolve_generic_task(task_id: int):
@@ -427,7 +613,7 @@ def create_app(db_path: str | Path) -> Flask:
             return "Operator notes are required when a task cannot be completed", 400
         resolve_task(conn, task_id, {"decision": decision, "notes": notes})
         supervisor().notify_operator_task_resolved(task_id)
-        return redirect(url_for("tasks"))
+        return _redirect_after_form("tasks")
 
     @app.get("/notifications/<int:notification_id>")
     def notification_detail(notification_id: int):
@@ -447,7 +633,7 @@ def create_app(db_path: str | Path) -> Flask:
         notes = request.form.get("notes", "").strip()
         acknowledge_operator_notification(conn, notification_id, {"decision": "acknowledged", "notes": notes})
         supervisor().notify_operator_notification_acknowledged(notification_id)
-        return redirect(url_for("notifications"))
+        return _redirect_after_form("notifications")
 
     @app.get("/logs")
     def logs():
