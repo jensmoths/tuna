@@ -72,6 +72,7 @@ def create_app(db_path: str | Path) -> Flask:
     app.config.setdefault("TUNE_DEFAULT_BRIDGE_HOST", "tuna-bridge-usb")
     app.config.setdefault("TUNE_DEFAULT_PI_MODEL", "gpt-5.4-mini")
     app.config.setdefault("TUNE_DEFAULT_THINKING_LEVEL", "medium")
+    app.config.setdefault("TUNE_VERBOSE", False)
 
     def db():
         conn = connect(app.config["TUNE_DB"])
@@ -85,6 +86,7 @@ def create_app(db_path: str | Path) -> Flask:
                 app.config["TUNE_DB"],
                 cwd=app.config["TUNE_WORKDIR"],
                 pi_command=app.config["TUNE_PI_COMMAND"],
+                verbose=bool(app.config["TUNE_VERBOSE"]),
             )
             app.extensions["tuna_pi_supervisor"] = existing
         return existing

@@ -47,6 +47,33 @@ class TuneCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn("Tune helper tool", result.stdout)
 
+    def test_web_cli_enables_verbose_mode(self):
+        class FakeApp:
+            def __init__(self):
+                self.config = {}
+                self.run_kwargs = None
+
+            def run(self, **kwargs):
+                self.run_kwargs = kwargs
+
+        fake_app = FakeApp()
+        with patch("tune.web.app.create_app", return_value=fake_app) as create_app:
+            code = main([
+                "--db",
+                str(self.db),
+                "web",
+                "--host",
+                "0.0.0.0",
+                "--port",
+                "9999",
+                "--verbose",
+            ])
+
+        self.assertEqual(code, 0)
+        create_app.assert_called_once_with(str(self.db))
+        self.assertTrue(fake_app.config["TUNE_VERBOSE"])
+        self.assertEqual(fake_app.run_kwargs, {"host": "0.0.0.0", "port": 9999})
+
     def test_agent_friendly_cli_flow(self):
         self.run_cli_json("db", "init")
         build = self.run_cli_json("build", "create", "5 inch", "--fc-snapshot-json", '{"fc":"BTFL"}')
@@ -107,6 +134,50 @@ class TuneCliTests(unittest.TestCase):
         self.assertEqual(completed["status"], "completed")
         self.assertEqual(completed["result"], "no_change")
         self.assertIn("Blackbox Log", completed["no_change_reason"])
+
+    def test_iteration_complete_no_change_returns_json_error(self):
+        self.run_cli_json("db", "init")
+        build = self.run_cli_json("build", "create", "5 inch")
+        loop = self.run_cli_json("loop", "create", "--build-id", str(build["build_id"]), "--tune-goal", "baseline")
+        iteration = self.run_cli_json("iteration", "create", "--loop-id", str(loop["loop_id"]))
+
+        code, result = self.run_cli_json_with_code(
+            "iteration",
+            "complete-no-change",
+            "--iteration-id",
+            str(iteration["iteration_id"]),
+            "--reason",
+            "No change",
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(result["error"]["kind"], "ValueError")
+        self.assertIn("Diagnosis", result["error"]["message"])
+
+    def test_iteration_complete_with_diagnosis_is_atomic(self):
+        self.run_cli_json("db", "init")
+        build = self.run_cli_json("build", "create", "5 inch")
+        loop = self.run_cli_json("loop", "create", "--build-id", str(build["build_id"]), "--tune-goal", "baseline")
+        iteration = self.run_cli_json("iteration", "create", "--loop-id", str(loop["loop_id"]))
+
+        completed = self.run_cli_json(
+            "iteration",
+            "complete-with-diagnosis",
+            "--iteration-id",
+            str(iteration["iteration_id"]),
+            "--body",
+            "Usable Blackbox Log, no safe change",
+            "--reason",
+            "No safe Tune Update",
+            "--confidence",
+            "medium",
+            "--evidence-json",
+            '{"logs":[1]}',
+        )
+
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(completed["result"], "no_change")
+        self.assertIn("diagnosis_id", completed)
 
     def test_log_transfer_command_delegates_to_fcs_transfer_with_validation(self):
         output = self.root / "flight.bbl"
@@ -237,6 +308,12 @@ class TuneCliTests(unittest.TestCase):
         self.assertNotIn("ranges", result)
         self.assertIn("ranges", json.loads(full_json.read_text()))
 
+        summary = self.run_cli_json("log", "analysis-summary", "--log-id", str(log["log_id"]))
+        self.assertEqual(summary["log_id"], log["log_id"])
+        self.assertEqual(summary["row_count"], 2)
+        self.assertIn("segment_counts", summary)
+        self.assertNotIn("ranges", summary)
+
     def test_log_decode_analyze_runs_in_sequence(self):
         self.run_cli_json("db", "init")
         build = self.run_cli_json("build", "create", "5 inch")
@@ -323,6 +400,9 @@ class TuneCliTests(unittest.TestCase):
         self.assertEqual(tasks[0]["kind"], "request_flight_capture")
         payload = json.loads(tasks[0]["payload_json"])
         self.assertEqual(payload["capture_goal"], "Capture propwash recovery maneuvers")
+        self.assertIn("operator_message", payload)
+        self.assertIn("1. Pilot:", payload["operator_message"])
+        self.assertIn("4. Operator:", payload["operator_message"])
         self.assertIn("pilot_instructions", payload)
         self.assertIn("operator_post_flight_steps", payload)
         self.assertIn("tuning_agent_follow_up_steps", payload)
@@ -349,6 +429,10 @@ class TuneCliTests(unittest.TestCase):
         self.assertEqual(tasks[0]["id"], result["task_id"])
         self.assertEqual(tasks[0]["payload"]["bridge_host"], "tuna-bridge-usb")
         self.assertEqual(json.loads(tasks[0]["payload_json"])["loop_id"], 2)
+
+        task = self.run_cli_json("task", "show", "--task-id", str(result["task_id"]))
+        self.assertEqual(task["id"], result["task_id"])
+        self.assertEqual(task["payload"]["bridge_host"], "tuna-bridge-usb")
 
     def test_confirm_build_cli_records_operator_task(self):
         self.run_cli_json("db", "init")
@@ -417,6 +501,20 @@ class TuneCliTests(unittest.TestCase):
         self.assertEqual(context["loop"]["id"], loop["loop_id"])
         self.assertEqual(context["build"]["fc_snapshot"], {"fc_variant": "BTFL"})
         self.assertEqual(context["open_tasks"][0]["kind"], "request_flight_capture")
+
+        status = self.run_cli_json("loop", "status", "--loop-id", str(loop["loop_id"]))
+        self.assertEqual(status["loop"]["id"], loop["loop_id"])
+        self.assertEqual(status["open_tasks"][0]["kind"], "request_flight_capture")
+        self.assertNotIn("payload", status["open_tasks"][0])
+
+    def test_build_show_returns_one_build(self):
+        self.run_cli_json("db", "init")
+        build = self.run_cli_json("build", "create", "5 inch", "--fc-snapshot-json", '{"identity":{"fc_variant":"BTFL"}}')
+
+        shown = self.run_cli_json("build", "show", "--build-id", str(build["build_id"]))
+
+        self.assertEqual(shown["id"], build["build_id"])
+        self.assertEqual(shown["fc_snapshot"]["identity"]["fc_variant"], "BTFL")
 
     def test_fcs_inspect_cli_delegates_to_probe_service(self):
         payload = {"identity": {"fc_variant": "BTFL"}, "blackbox_storage": {"used_size": 42}}

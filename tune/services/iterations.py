@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import sqlite3
+from typing import Any
 
 from tune.domain.rules import ensure_no_open_iteration
 
@@ -53,3 +55,48 @@ def complete_no_change(conn: sqlite3.Connection, iteration_id: int, reason: str)
         (reason.strip(), iteration_id),
     )
     conn.commit()
+
+
+def complete_no_change_with_diagnosis(
+    conn: sqlite3.Connection,
+    iteration_id: int,
+    *,
+    body: str,
+    reason: str,
+    confidence: str = "",
+    evidence: dict[str, Any] | None = None,
+) -> int:
+    if not reason.strip():
+        raise ValueError("No-change completion requires a reason")
+    if not body.strip():
+        raise ValueError("Diagnosis body is required")
+    row = conn.execute("SELECT status FROM tuning_iterations WHERE id = ?", (iteration_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"Tuning Iteration {iteration_id} does not exist")
+    if row["status"] != "open":
+        raise ValueError(f"Tuning Iteration {iteration_id} is not open")
+    existing_diagnosis = conn.execute("SELECT id FROM diagnoses WHERE iteration_id = ?", (iteration_id,)).fetchone()
+    if existing_diagnosis is not None:
+        raise ValueError("Tuning Iteration already has a Diagnosis")
+    update = conn.execute("SELECT id FROM tune_updates WHERE iteration_id = ?", (iteration_id,)).fetchone()
+    if update is not None:
+        raise ValueError("Tuning Iteration already has a Tune Update")
+    try:
+        cur = conn.execute(
+            "INSERT INTO diagnoses (iteration_id, body, confidence, evidence_json) VALUES (?, ?, ?, ?)",
+            (iteration_id, body.strip(), confidence, json.dumps(evidence or {}, sort_keys=True)),
+        )
+        diagnosis_id = int(cur.lastrowid)
+        conn.execute(
+            """
+            UPDATE tuning_iterations
+            SET status = 'completed', result = 'no_change', no_change_reason = ?, completed_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (reason.strip(), iteration_id),
+        )
+    except Exception:
+        conn.rollback()
+        raise
+    conn.commit()
+    return diagnosis_id

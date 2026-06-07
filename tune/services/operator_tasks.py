@@ -24,16 +24,14 @@ def create_flight_capture_task(
     reason: str = "Need another Blackbox Log for tuning evidence.",
     capture_goal: str = "Capture a useful follow-up Blackbox Log for the current Tune Goal.",
 ) -> int:
-    body = (
-        "Fly and capture another Blackbox Log for Tuna analysis. The Tuning Agent is responsible for any "
-        "flight-controller diagnostic setup through FCS before creating this task; the Operator/Pilot should "
-        "focus on safely completing the flight and reporting whether a Blackbox Log was captured."
-    )
+    operator_message = _flight_capture_operator_message(capture_goal)
+    body = operator_message
     payload = {
         "build_id": build_id,
         "loop_id": loop_id,
         "reason": reason,
         "capture_goal": capture_goal,
+        "operator_message": operator_message,
         "pilot_instructions": [
             "Fly in safe open space with enough altitude and battery margin",
             "Perform maneuvers relevant to the Tune Goal",
@@ -61,6 +59,20 @@ def create_flight_capture_task(
         },
     }
     return create_task(conn, "request_flight_capture", "Capture follow-up Blackbox Log", body=body, payload=payload)
+
+
+def _flight_capture_operator_message(capture_goal: str) -> str:
+    return "\n".join(
+        [
+            f"Capture goal: {capture_goal}",
+            "",
+            "Steps:",
+            "1. Pilot: fly the requested maneuvers for the capture goal.",
+            "2. Pilot: land and disarm normally to finalize the Blackbox Log.",
+            "3. Operator: keep or reconnect the FC/Bridge connection.",
+            "4. Operator: resolve this task as captured or failed, with notes.",
+        ]
+    )
 
 
 def create_fcs_connection_task(

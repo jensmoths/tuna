@@ -28,10 +28,18 @@ class PiRpcSupervisor:
     decide Tuna workflow actions inside a **Loop**.
     """
 
-    def __init__(self, db_path: str | Path, *, cwd: str | Path | None = None, pi_command: str = "pi") -> None:
+    def __init__(
+        self,
+        db_path: str | Path,
+        *,
+        cwd: str | Path | None = None,
+        pi_command: str = "pi",
+        verbose: bool = False,
+    ) -> None:
         self.db_path = Path(db_path)
         self.cwd = Path(cwd) if cwd is not None else Path.cwd()
         self.pi_command = pi_command
+        self.verbose = verbose
         self._lock = threading.Lock()
         self._processes: dict[int, subprocess.Popen[str]] = {}
 
@@ -145,7 +153,7 @@ class PiRpcSupervisor:
             return
         message = (
             f"Operator Task #{task_id} ({task['kind']}) has been resolved in the Operator Console. "
-            "Inspect Tuna state with JSON tune commands, read the task response, and continue the Loop decision process."
+            f"Inspect Tuna state with JSON tune commands, read the task response with `python3 -m tune --db {self.db_path} task show --task-id {task_id} --json`, and continue the Loop decision process."
         )
         for loop_id in loop_ids:
             self._append_debug_trace(loop_id, f"Operator Task #{task_id} resolved; notifying Tuning Agent")
@@ -453,6 +461,8 @@ class PiRpcSupervisor:
         event_type = str(event.get("type") or "event")
         if event_type == "message_update":
             return None
+        if event_type == "tool_execution_update" and not self.verbose:
+            return None
         if event_type == "message_start":
             return None
         if event_type == "message_end":
@@ -517,9 +527,9 @@ Tune Goal: {loop['tune_goal']}
 FCS Bridge host: {bridge_line}
 
 First:
-1. Inspect Tuna state with `python3 -m tune --db {self.db_path} loop context --loop-id {loop['id']} --json`.
+1. Inspect compact Tuna state with `python3 -m tune --db {self.db_path} loop status --loop-id {loop['id']} --json`.
 {fcs_step}
-3. If the connected FC snapshot is missing, ambiguous, or does not clearly match the Loop Build, create a `confirm_build` Operator Task with the FCS-derived snapshot before continuing.
+3. If FCS inspection fails, create a `request_fcs_connection` Operator Task. Only create a `confirm_build` Operator Task when a real FCS-derived FC snapshot is available and is missing, ambiguous, or does not clearly match the Loop Build.
 4. Confirm whether the Build and Tune Goal are sufficient.
 5. If needed, create Operator Tasks.
 6. Create or resume the Loop context in this Pi session.
@@ -547,8 +557,8 @@ Tune Goal: {loop['tune_goal']}
 FCS Bridge host: {bridge_line}
 
 First:
-1. Inspect Tuna state with `python3 -m tune --db {self.db_path} loop context --loop-id {loop['id']} --json`.
-2. Check open and recently resolved Operator Tasks and Operator Notifications.
+1. Inspect compact Tuna state with `python3 -m tune --db {self.db_path} loop status --loop-id {loop['id']} --json`.
+2. Check open and recently resolved Operator Tasks and Operator Notifications. If this continuation followed an Operator Task resolution, read that task with `task show --task-id <id> --json`.
 3. Resume the Loop decision process from durable Tuna state and the existing Pi session history.
 4. If a previous action was interrupted, verify state before retrying it.
 

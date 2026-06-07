@@ -71,7 +71,7 @@ class PiSupervisorWebTests(unittest.TestCase):
         self.assertIn('"type": "get_state"', sent)
         self.assertIn('"type": "prompt"', sent)
         self.assertIn("FCS Bridge host: tuna-bridge-usb", sent)
-        self.assertIn("loop context", sent)
+        self.assertIn("loop status", sent)
         self.assertIn("fcs inspect", sent)
         self.assertIn("do not read source code or repository docs", sent)
         self.assertIn("Injected Tuna Tuning Agent operating instructions", sent)
@@ -241,7 +241,7 @@ class PiSupervisorWebTests(unittest.TestCase):
         self.assertNotIn("Use tune/agent/SKILL.md", sent)
         self.assertNotIn("docs/domain-model.md", sent)
         self.assertIn("Check open and recently resolved Operator Tasks", sent)
-        self.assertIn("loop context", sent)
+        self.assertIn("loop status", sent)
         session = self.conn.execute("SELECT status, process_id, debug_trace FROM tuning_agent_sessions WHERE loop_id = ?", (loop_id,)).fetchone()
         self.assertEqual(session["status"], "Starting Tuning Agent")
         self.assertEqual(session["process_id"], 5678)
@@ -301,6 +301,24 @@ class PiSupervisorWebTests(unittest.TestCase):
 
         self.assertIsNone(update_trace)
         self.assertEqual(end_trace, "Tuning Agent message: I resolved the Operator Task and will inspect Tuna state.")
+
+    def test_pi_rpc_tool_execution_updates_require_verbose(self):
+        supervisor = PiRpcSupervisor(self.db_path, cwd=self.root)
+        event = {"type": "tool_execution_update"}
+
+        self.assertIsNone(supervisor._trace_for_event(event))
+
+        verbose_supervisor = PiRpcSupervisor(self.db_path, cwd=self.root, verbose=True)
+        self.assertEqual(verbose_supervisor._trace_for_event(event), "Pi RPC event: tool_execution_update")
+
+    def test_verbose_does_not_change_other_rpc_event_logging(self):
+        event = {"type": "agent_start"}
+
+        normal_supervisor = PiRpcSupervisor(self.db_path, cwd=self.root)
+        verbose_supervisor = PiRpcSupervisor(self.db_path, cwd=self.root, verbose=True)
+
+        self.assertEqual(normal_supervisor._trace_for_event(event), "agent started responding")
+        self.assertEqual(verbose_supervisor._trace_for_event(event), "agent started responding")
 
     def test_cli_supervisor_trace_labels_messages_and_logs(self):
         supervisor = PiRpcSupervisor(self.db_path, cwd=self.root)

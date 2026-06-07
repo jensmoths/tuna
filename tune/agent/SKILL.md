@@ -45,18 +45,34 @@ Use the project terms exactly:
 Use this checklist before broader discovery:
 
 1. Read compact state first:
-   `python3 -m tune --db tune.sqlite3 loop context --loop-id <id> --json`
+   `python3 -m tune --db tune.sqlite3 loop status --loop-id <id> --json`
+   Use full `loop context` only when the compact status is insufficient.
 2. If hardware is connected, inspect it through Tuna/FCS:
    `python3 -m tune --db tune.sqlite3 fcs inspect --bridge-host <host> --json`
-3. Create needed **Operator Tasks** with CLI subcommands, not Python snippets.
-4. Use `python3 -m tune --db tune.sqlite3 log transfer ... --json` for **Post-flight Transfer**.
-5. Import, decode, and analyze with concise commands:
+3. Read individual **Operator Task** responses with:
+   `python3 -m tune --db tune.sqlite3 task show --task-id <id> --json`
+   Avoid broad resolved task lists unless you do not know the task id.
+4. Create needed **Operator Tasks** with CLI subcommands, not Python snippets.
+5. Use `python3 -m tune --db tune.sqlite3 log transfer ... --json` for **Post-flight Transfer**.
+6. Import, decode, and analyze with concise commands:
    `python3 -m tune --db tune.sqlite3 log import ... --json`
    `python3 -m tune --db tune.sqlite3 log decode-analyze --log-id <id> --json`
+7. Inspect analysis with compact summaries:
+   `python3 -m tune --db tune.sqlite3 log analysis-summary --log-id <id> --json`
+8. Complete no-change **Tuning Iterations** atomically:
+   `python3 -m tune --db tune.sqlite3 iteration complete-with-diagnosis --iteration-id <id> --body ... --reason ... --json`
 
-Do not read source code during normal **Loop** operation. If syntax is unclear,
-use `python3 -m tune --help` or subcommand `--help`. Source inspection is only
-for implementing/debugging Tuna itself.
+Do not read source code, repository docs, decoded CSV files, or full analysis
+JSON during normal **Loop** operation. Do not write ad hoc Python/Ruby/shell
+parsers for Tuna state, analysis, or decoded logs. If a compact CLI command is
+missing, create an **Operator Notification** or report the missing capability;
+do not inspect the repository to work around it. Use `python3 -m tune --help` or
+subcommand `--help` only as a last resort when the compact command list above is
+insufficient. Source inspection is only for implementing/debugging Tuna itself.
+
+Do not run dependent state-changing commands in parallel. For example, record a
+**Diagnosis** and complete a **Tuning Iteration** with one atomic CLI command, or
+wait for the first command to finish before the second.
 
 ## Core rules
 

@@ -11,7 +11,7 @@ from tune.services.builds import create_build
 from tune.services.diagnoses import record_diagnosis
 from tune.services.fcs_transfer import read_bridge_status, transfer_blackbox_log_from_bridge
 from tune.services.fcs_probe import inspect_fcs
-from tune.services.iterations import complete_no_change, create_iteration
+from tune.services.iterations import complete_no_change, complete_no_change_with_diagnosis, create_iteration
 from tune.services.logs import import_blackbox_log
 from tune.services.loop_context import get_loop_context
 from tune.services.segment_rows import get_segment_rows
@@ -155,7 +155,7 @@ def _transfer_error_payload(exc: BaseException, *, output_path: Path) -> dict[st
 
 
 def _command_error_payload(exc: BaseException) -> dict[str, Any]:
-    return {"error": {"kind": exc.__class__.__name__, "message": str(exc)}}
+    return {"error": {"kind": exc.__class__.__name__, "message": str(exc), "retryable": False}}
 
 
 def _emit_command_error(exc: BaseException, json_output: bool) -> None:
@@ -163,6 +163,85 @@ def _emit_command_error(exc: BaseException, json_output: bool) -> None:
         _print_json(_command_error_payload(exc))
     else:
         print(str(exc), file=sys.stderr)
+
+
+def _require_row(row: Any, label: str, row_id: int) -> Any:
+    if row is None:
+        raise ValueError(f"{label} {row_id} does not exist")
+    return row
+
+
+def _compact_segment(segment: dict[str, Any]) -> dict[str, Any]:
+    compact = {key: value for key, value in segment.items() if key != "raw_data_ref"}
+    ref = segment.get("raw_data_ref")
+    if isinstance(ref, dict):
+        compact["raw_data_ref"] = {key: ref.get(key) for key in ("start_row", "end_row", "start_time_us", "end_time_us") if key in ref}
+    return compact
+
+
+def _analysis_summary_payload(conn: Any, log_id: int) -> dict[str, Any]:
+    row = conn.execute(
+        "SELECT id, analyzed_at, analysis_json FROM log_analyses WHERE log_id = ? ORDER BY analyzed_at DESC, id DESC LIMIT 1",
+        (log_id,),
+    ).fetchone()
+    _require_row(row, "Analysis for Blackbox Log", log_id)
+    analysis = json.loads(row["analysis_json"])
+    segments = analysis.get("segments") if isinstance(analysis.get("segments"), dict) else {}
+    segment_counts = {kind: len(items) for kind, items in segments.items() if isinstance(items, list)}
+    segment_examples = {
+        kind: [_compact_segment(segment) for segment in items[:3] if isinstance(segment, dict)]
+        for kind, items in segments.items()
+        if isinstance(items, list) and items
+    }
+    return {
+        "log_id": log_id,
+        "analysis_id": row["id"],
+        "analyzed_at": row["analyzed_at"],
+        "row_count": analysis.get("row_count"),
+        "duration_seconds": analysis.get("duration_seconds"),
+        "quality": analysis.get("quality"),
+        "warnings": analysis.get("warnings", []),
+        "activity": analysis.get("activity"),
+        "flight": analysis.get("flight"),
+        "segment_counts": segment_counts,
+        "segment_examples": segment_examples,
+        "pid_term_summary": analysis.get("pid_term_summary"),
+        "motor_summary": analysis.get("motor_summary"),
+        "chirp_analysis": analysis.get("chirp_analysis"),
+    }
+
+
+def _loop_status_payload(conn: Any, loop_id: int) -> dict[str, Any]:
+    context = get_loop_context(conn, loop_id, recent_limit=3)
+    build = context["build"]
+    snapshot = build.get("fc_snapshot") if isinstance(build.get("fc_snapshot"), dict) else {}
+    return {
+        "loop": context["loop"],
+        "build": {
+            "id": build["id"],
+            "name": build["name"],
+            "fc_snapshot_identity": snapshot.get("identity", snapshot),
+            "operator_notes": build.get("operator_notes", ""),
+        },
+        "current_iteration": context["current_iteration"],
+        "usable_logs": [
+            {
+                "id": log["id"],
+                "parse_status": log["parse_status"],
+                "latest_analysis": log.get("latest_analysis"),
+            }
+            for log in context["logs"]
+            if log.get("parse_status") == "readable"
+        ],
+        "open_tasks": [{"id": task["id"], "kind": task["kind"], "title": task["title"]} for task in context["open_tasks"]],
+        "recent_tasks": [
+            {"id": task["id"], "kind": task["kind"], "status": task["status"], "response": task.get("response")}
+            for task in context["recent_tasks"]
+        ],
+        "open_notifications": [{"id": item["id"], "kind": item["kind"], "title": item["title"]} for item in context["open_notifications"]],
+        "pending_writes": context["pending_writes"],
+        "resume": context["resume"],
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -182,6 +261,9 @@ def main(argv: list[str] | None = None) -> int:
     build_create.add_argument("--operator-notes", default="")
     _add_json(build_create)
     _add_json(build_sub.add_parser("list"))
+    build_show = build_sub.add_parser("show")
+    build_show.add_argument("--build-id", type=int, required=True)
+    _add_json(build_show)
 
     loop = top.add_parser("loop")
     loop_sub = loop.add_subparsers(dest="action", required=True)
@@ -196,6 +278,9 @@ def main(argv: list[str] | None = None) -> int:
     loop_context.add_argument("--loop-id", type=int, required=True)
     loop_context.add_argument("--recent-limit", type=int, default=5)
     _add_json(loop_context)
+    loop_status = loop_sub.add_parser("status")
+    loop_status.add_argument("--loop-id", type=int, required=True)
+    _add_json(loop_status)
 
     log = top.add_parser("log")
     log_sub = log.add_subparsers(dest="action", required=True)
@@ -249,6 +334,9 @@ def main(argv: list[str] | None = None) -> int:
     segment_rows.add_argument("--pad-rows", type=int, default=0)
     segment_rows.add_argument("--max-rows", type=int, default=500)
     _add_json(segment_rows)
+    log_analysis_summary = log_sub.add_parser("analysis-summary")
+    log_analysis_summary.add_argument("--log-id", type=int, required=True)
+    _add_json(log_analysis_summary)
     log_list = log_sub.add_parser("list")
     log_list.add_argument("--build-id", type=int)
     _add_json(log_list)
@@ -266,6 +354,14 @@ def main(argv: list[str] | None = None) -> int:
     iteration_no_change.add_argument("--iteration-id", type=int, required=True)
     iteration_no_change.add_argument("--reason", required=True)
     _add_json(iteration_no_change)
+    iteration_complete_with_diagnosis = iteration_sub.add_parser("complete-with-diagnosis")
+    iteration_complete_with_diagnosis.add_argument("--iteration-id", type=int, required=True)
+    iteration_complete_with_diagnosis.add_argument("--body", required=True)
+    iteration_complete_with_diagnosis.add_argument("--reason", required=True)
+    iteration_complete_with_diagnosis.add_argument("--confidence", default="")
+    iteration_complete_with_diagnosis.add_argument("--evidence-json", default="{}")
+    iteration_complete_with_diagnosis.add_argument("--result", choices=("no_change",), default="no_change")
+    _add_json(iteration_complete_with_diagnosis)
 
     diagnosis = top.add_parser("diagnosis")
     diagnosis_sub = diagnosis.add_subparsers(dest="action", required=True)
@@ -335,6 +431,9 @@ def main(argv: list[str] | None = None) -> int:
     task_list.add_argument("--status", choices=("open", "resolved", "all"), default="all")
     task_list.add_argument("--limit", type=int)
     _add_json(task_list)
+    task_show = task_sub.add_parser("show")
+    task_show.add_argument("--task-id", type=int, required=True)
+    _add_json(task_show)
 
     notify = top.add_parser("notify")
     notify_sub = notify.add_subparsers(dest="action", required=True)
@@ -362,6 +461,7 @@ def main(argv: list[str] | None = None) -> int:
     web = top.add_parser("web")
     web.add_argument("--host", default="127.0.0.1")
     web.add_argument("--port", type=int, default=8765)
+    web.add_argument("--verbose", action="store_true", help="show verbose Operator Console diagnostics")
 
     status = top.add_parser("status")
     _add_json(status)
@@ -381,6 +481,15 @@ def main(argv: list[str] | None = None) -> int:
         _emit({"build_id": build_id}, args.json)
     elif args.area == "build" and args.action == "list":
         _print_json([_row_to_dict(row) for row in conn.execute("SELECT * FROM builds ORDER BY id")])
+    elif args.area == "build" and args.action == "show":
+        try:
+            row = _require_row(conn.execute("SELECT * FROM builds WHERE id = ?", (args.build_id,)).fetchone(), "Build", args.build_id)
+        except ValueError as exc:
+            _emit_command_error(exc, args.json)
+            return 1
+        payload = _row_to_dict(row)
+        payload["fc_snapshot"] = json.loads(payload.pop("fc_snapshot_json"))
+        _print_json(payload)
     elif args.area == "loop" and args.action == "create":
         loop_id = create_loop(conn, args.build_id, args.tune_goal)
         _emit({"loop_id": loop_id}, args.json)
@@ -399,6 +508,13 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json({"error": {"kind": exc.__class__.__name__, "message": str(exc)}})
             else:
                 print(str(exc), file=sys.stderr)
+            return 1
+        _print_json(payload)
+    elif args.area == "loop" and args.action == "status":
+        try:
+            payload = _loop_status_payload(conn, args.loop_id)
+        except ValueError as exc:
+            _emit_command_error(exc, args.json)
             return 1
         _print_json(payload)
     elif args.area == "log" and args.action == "import":
@@ -531,19 +647,30 @@ def main(argv: list[str] | None = None) -> int:
         _print_json(payload)
     elif args.area == "log" and args.action == "segment-rows":
         fields = [field.strip() for field in args.fields.split(",")] if args.fields else None
-        payload = get_segment_rows(
-            conn,
-            log_id=args.log_id,
-            segment_kind=args.segment_kind,
-            segment_index=args.segment_index,
-            fields=fields,
-            pad_rows=args.pad_rows,
-            max_rows=args.max_rows,
-        )
+        try:
+            payload = get_segment_rows(
+                conn,
+                log_id=args.log_id,
+                segment_kind=args.segment_kind,
+                segment_index=args.segment_index,
+                fields=fields,
+                pad_rows=args.pad_rows,
+                max_rows=args.max_rows,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            _emit_command_error(exc, args.json)
+            return 1
         if args.json:
             _print_json(payload)
         else:
             print(len(payload["rows"]))
+    elif args.area == "log" and args.action == "analysis-summary":
+        try:
+            payload = _analysis_summary_payload(conn, args.log_id)
+        except (json.JSONDecodeError, ValueError) as exc:
+            _emit_command_error(exc, args.json)
+            return 1
+        _print_json(payload)
     elif args.area == "log" and args.action == "list":
         sql = "SELECT id, build_id, managed_path, sha256, size_bytes, parse_status, imported_at FROM blackbox_logs"
         params = ()
@@ -558,11 +685,36 @@ def main(argv: list[str] | None = None) -> int:
         row = conn.execute("SELECT * FROM tuning_iterations WHERE loop_id = ? AND status = 'open'", (args.loop_id,)).fetchone()
         _print_json(_row_to_dict(row))
     elif args.area == "iteration" and args.action == "complete-no-change":
-        complete_no_change(conn, args.iteration_id, args.reason)
+        try:
+            complete_no_change(conn, args.iteration_id, args.reason)
+        except ValueError as exc:
+            _emit_command_error(exc, args.json)
+            return 1
         row = conn.execute("SELECT * FROM tuning_iterations WHERE id = ?", (args.iteration_id,)).fetchone()
         _print_json(_row_to_dict(row) if args.json else {"iteration_id": args.iteration_id})
+    elif args.area == "iteration" and args.action == "complete-with-diagnosis":
+        try:
+            diagnosis_id = complete_no_change_with_diagnosis(
+                conn,
+                args.iteration_id,
+                body=args.body,
+                reason=args.reason,
+                confidence=args.confidence,
+                evidence=json.loads(args.evidence_json),
+            )
+        except (json.JSONDecodeError, ValueError) as exc:
+            _emit_command_error(exc, args.json)
+            return 1
+        row = conn.execute("SELECT * FROM tuning_iterations WHERE id = ?", (args.iteration_id,)).fetchone()
+        payload = _row_to_dict(row)
+        payload["diagnosis_id"] = diagnosis_id
+        _print_json(payload)
     elif args.area == "diagnosis" and args.action == "record":
-        diagnosis_id = record_diagnosis(conn, args.iteration_id, args.body, confidence=args.confidence, evidence=json.loads(args.evidence_json))
+        try:
+            diagnosis_id = record_diagnosis(conn, args.iteration_id, args.body, confidence=args.confidence, evidence=json.loads(args.evidence_json))
+        except (json.JSONDecodeError, ValueError) as exc:
+            _emit_command_error(exc, args.json)
+            return 1
         _emit({"diagnosis_id": diagnosis_id}, args.json)
     elif args.area == "update" and args.action == "pending-writes":
         rows = conn.execute(
@@ -641,6 +793,13 @@ def main(argv: list[str] | None = None) -> int:
             sql += " LIMIT ?"
             params.append(args.limit)
         _print_json([_task_payload(row) for row in conn.execute(sql, tuple(params))])
+    elif args.area == "task" and args.action == "show":
+        try:
+            row = _require_row(conn.execute("SELECT * FROM operator_tasks WHERE id = ?", (args.task_id,)).fetchone(), "Operator Task", args.task_id)
+        except ValueError as exc:
+            _emit_command_error(exc, args.json)
+            return 1
+        _print_json(_task_payload(row))
     elif args.area == "notify" and args.action == "blackbox-config-changed":
         notification_id = create_blackbox_config_notification(
             conn,
@@ -676,7 +835,9 @@ def main(argv: list[str] | None = None) -> int:
         _print_json(payload)
     elif args.area == "web":
         from tune.web.app import create_app
-        create_app(args.db).run(host=args.host, port=args.port)
+        app = create_app(args.db)
+        app.config["TUNE_VERBOSE"] = args.verbose
+        app.run(host=args.host, port=args.port)
     elif args.area == "status":
         _print_json({
             "builds": conn.execute("SELECT COUNT(*) FROM builds").fetchone()[0],

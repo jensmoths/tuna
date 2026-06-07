@@ -13,6 +13,7 @@
 {% elif task.kind == 'request_flight_capture' %}
 <h2>Flight capture request</h2>
 <div class="card">
+  {% if task.payload.operator_message %}<pre>{{ task.payload.operator_message }}</pre>{% endif %}
   <p><strong>Capture goal:</strong> {{ task.payload.capture_goal }}</p>
   <h3>Pilot instructions</h3><ul>{% for item in task.payload.pilot_instructions %}<li>{{ item }}</li>{% endfor %}</ul>
   <h3>Operator post-flight steps</h3><ul>{% for item in task.payload.operator_post_flight_steps %}<li>{{ item }}</li>{% endfor %}</ul>

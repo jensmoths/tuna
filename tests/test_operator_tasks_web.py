@@ -85,6 +85,8 @@ class OperatorWebTests(unittest.TestCase):
         page = client.get(f"/tasks/{task_id}")
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"Flight capture request", page.data)
+        self.assertIn(b"1. Pilot:", page.data)
+        self.assertIn(b"4. Operator:", page.data)
         self.assertIn(b"Operator post-flight steps", page.data)
         self.assertIn(b"Tuning Agent follow-up", page.data)
         self.assertIn(b"Post-flight Transfer", page.data)
