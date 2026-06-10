@@ -63,6 +63,60 @@ class AnalysisTests(AnalysisTestCase):
         self.assertGreater(high_rate[0]["rough_noise"]["gyro_mean_abs_delta"], 0)
         self.assertEqual(len(summary["segments"]["throttle_punch"]), 1)
 
+    def test_analyze_csv_log_detects_throttle_chop_motor_hang(self):
+        path = self.root / "throttle-chop.csv"
+        path.write_text(
+            "time,gyroADC[0],gyroADC[1],gyroADC[2],setpoint[0],setpoint[1],setpoint[2],motor[0],motor[1],rcCommand[3],axisP[0],axisI[0],axisD[0]\n"
+            "0,0,0,0,0,0,0,1000,1000,1500,0,0,0\n"
+            "100000,0,0,0,0,0,0,1200,1190,1000,5,40,2\n"
+            "150000,0,0,0,0,0,0,1180,1170,1000,6,45,3\n"
+        )
+
+        summary = analyze_csv_log(path)
+
+        chop = summary["throttle_chop_analysis"]
+        self.assertTrue(chop["available"])
+        self.assertEqual(chop["summary"]["segment_count"], 1)
+        self.assertGreater(chop["segments"][0]["pid_terms"]["roll"]["I"]["mean_abs"], 40)
+
+    def test_analyze_csv_log_summarizes_cross_axis_roll_flip_disturbance(self):
+        path = self.root / "cross-axis.csv"
+        path.write_text(
+            "time,gyroADC[0],gyroADC[1],gyroADC[2],setpoint[0],setpoint[1],setpoint[2],motor[0],rcCommand[3],axisP[1],axisI[1],axisD[1]\n"
+            "0,0,0,0,0,0,0,1000,1000,0,0,0\n"
+            "100000,150,25,5,250,0,0,1500,1200,4,8,2\n"
+            "250000,260,80,10,300,0,0,1500,1200,5,9,3\n"
+        )
+
+        summary = analyze_csv_log(path)
+
+        flip = summary["cross_axis_flip_analysis"]
+        self.assertTrue(flip["available"])
+        self.assertEqual(flip["summary"]["roll_flip_segment_count"], 1)
+        self.assertEqual(flip["segments"][0]["cross_axis"]["pitch"]["gyro_max_abs"], 80.0)
+
+    def test_decode_imported_log_records_internal_csv_siblings(self):
+        conn = connect(self.root / "tune.sqlite3")
+        init_db(conn)
+        build_id = create_build(conn, "5 inch")
+        log_id = import_blackbox_log(conn, "reference-logs/btfl_all.bbl", build_id=build_id, storage_dir=self.root / "logs")
+        decoder = self.root / "fake_blackbox_decode"
+        decoder.write_text(
+            "#!/usr/bin/env python3\n"
+            "from pathlib import Path\n"
+            "import sys\n"
+            "out = Path(sys.argv[sys.argv.index('--output-dir') + 1])\n"
+            "stem = Path(sys.argv[-1]).stem\n"
+            "(out / f'{stem}.01.csv').write_text('time,gyroADC[0],gyroADC[1],gyroADC[2],setpoint[0],setpoint[1],setpoint[2]\\n0,0,0,0,0,0,0\\n')\n"
+            "(out / f'{stem}.02.csv').write_text('time,gyroADC[0],gyroADC[1],gyroADC[2],setpoint[0],setpoint[1],setpoint[2]\\n0,0,0,0,0,0,0\\n1,0,0,0,0,0,0\\n')\n"
+        )
+        decoder.chmod(0o755)
+
+        decoded = decode_imported_log(conn, log_id, output_dir=self.root / "decoded", decoder_command=str(decoder))
+
+        self.assertEqual(len(decoded["recordings"]), 2)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM decoded_logs").fetchone()[0], 2)
+
     def test_decode_blackbox_log_reports_missing_decoder(self):
         with self.assertRaises(BlackboxDecodeError):
             decode_blackbox_log("missing.bbl", self.root / "out.csv", decoder_command="definitely-not-blackbox-decode")

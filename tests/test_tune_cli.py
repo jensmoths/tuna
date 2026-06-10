@@ -222,7 +222,31 @@ class TuneCliTests(unittest.TestCase):
         self.assertEqual(summary["log_id"], log["log_id"])
         self.assertEqual(summary["row_count"], 2)
         self.assertIn("segment_counts", summary)
+        self.assertIn("config_snapshot", summary)
+        self.assertIn("pid_term_analysis", summary)
+        self.assertIn("motor_analysis", summary)
         self.assertNotIn("ranges", summary)
+
+        recordings = self.run_cli_json("analysis", "recordings", "--log-id", str(log["log_id"]))
+        self.assertEqual(recordings["recording_count"], 0)
+
+    def test_analysis_compare_and_detectors_are_compact(self):
+        self.run_cli_json("db", "init")
+        build = self.run_cli_json("build", "create", "5 inch")
+        before_log = self.run_cli_json("log", "import", "reference-logs/btfl_001.bbl", "--build-id", str(build["build_id"]), "--storage-dir", str(self.root / "logs"))
+        after_log = self.run_cli_json("log", "import", "reference-logs/btfl_002.bbl", "--build-id", str(build["build_id"]), "--storage-dir", str(self.root / "logs"))
+        before_csv = self.root / "before.csv"
+        after_csv = self.root / "after.csv"
+        before_csv.write_text("time,gyroADC[0],gyroADC[1],gyroADC[2],setpoint[0],setpoint[1],setpoint[2],motor[0],rcCommand[3],axisP[0],axisI[0],axisD[0]\n0,0,0,0,0,0,0,1000,1000,1,2,3\n100000,0,0,0,0,0,0,1100,1000,1,2,3\n")
+        after_csv.write_text("time,gyroADC[0],gyroADC[1],gyroADC[2],setpoint[0],setpoint[1],setpoint[2],motor[0],rcCommand[3],axisP[0],axisI[0],axisD[0]\n0,0,0,0,0,0,0,1000,1400,2,4,6\n100000,0,0,0,0,0,0,1200,1000,2,10,6\n150000,0,0,0,0,0,0,1190,1000,2,12,6\n")
+        self.run_cli_json("analysis", "analyze", "--log-id", str(before_log["log_id"]), "--csv-path", str(before_csv))
+        self.run_cli_json("analysis", "analyze", "--log-id", str(after_log["log_id"]), "--csv-path", str(after_csv))
+
+        compare = self.run_cli_json("analysis", "compare", "--before-log-id", str(before_log["log_id"]), "--after-log-id", str(after_log["log_id"]))
+        self.assertIn("pid_term_changes", compare)
+        chop = self.run_cli_json("analysis", "throttle-chop", "--log-id", str(after_log["log_id"]), "--limit", "1")
+        self.assertEqual(chop["returned_event_count"], 1)
+        self.assertEqual(len(chop["segments"]), 1)
 
     def test_log_decode_analyze_runs_in_sequence(self):
         self.run_cli_json("db", "init")

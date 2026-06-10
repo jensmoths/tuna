@@ -70,6 +70,13 @@ tuna-blackbox segment-rows artifacts/flight.csv \
 
 ## Evidence to inspect
 
+Prefer compact `tuna-core analysis` views in a Tuna Loop before reading full analysis JSON:
+
+- `analysis recordings --log-id ... --json` for internal Blackbox Log CSVs from a multi-log `.bbl`.
+- `analysis compare --before-log-id ... --after-log-id ... --json` for before/after metric deltas.
+- `analysis throttle-chop --log-id ... --json` for throttle-min/motor-hang evidence.
+- `analysis cross-axis-flip --log-id ... --json` for roll-flip pitch/yaw disturbance evidence.
+
 Use these analysis sections as evidence, when present:
 
 - `quality` and `warnings`: whether the **Blackbox Log** is usable, diagnostic-only, or insufficient.

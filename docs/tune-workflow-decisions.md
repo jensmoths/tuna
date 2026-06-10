@@ -134,6 +134,7 @@ Erase-after-import validation on 2026-06-06 confirmed `tuna-fcs blackbox erase -
 - `python3 -m tuna_core --db ... analysis decode --log-id ... --json` decodes an imported **Blackbox Log** to a CSV artifact and records it in SQLite.
 - `python3 -m tuna_core --db ... analysis analyze --log-id ... --json` analyzes the latest decoded CSV, or a provided CSV path, and records JSON analysis in SQLite.
 - `python3 -m tuna_core --db ... analysis decode-analyze --log-id ... --json` is the preferred **Tuning Agent** command because it avoids accidentally running decode and analyze in parallel.
+- Use compact follow-up commands to avoid loading full analysis JSON into the **Tuning Agent** context: `analysis recordings --log-id ... --json`, `analysis compare --before-log-id ... --after-log-id ... --json`, `analysis throttle-chop --log-id ... --json`, and `analysis cross-axis-flip --log-id ... --json`.
 - Initial analysis is intentionally simple and machine-readable: row count, duration, fields present, field count, ranges for gyro/setpoint/motor/PID-term fields, and warnings for missing expected fields.
 - Future analysis can add maneuver detection, noise summaries, response/overshoot metrics, motor saturation checks, and PIDtoolbox-like spectral analysis.
 

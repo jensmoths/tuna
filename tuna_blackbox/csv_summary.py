@@ -27,6 +27,7 @@ from .common import (
     track_range as _track_range,
     truthy_field as _truthy_field,
 )
+from .analysis_views import config_snapshot as _config_snapshot
 from .filters import summarize_filter_analysis as _summarize_filter_analysis
 from .motors import summarize_motor_analysis as _summarize_motor_analysis
 from .pid_terms import summarize_pid_term_analysis as _summarize_pid_term_analysis
@@ -127,6 +128,9 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
     motor_throttle_bins: dict[str, dict[str, list[float]]] = {}
     pid_samples = {axis: [] for axis in AXES.values()}
     chirp_rows: list[dict[str, float | int]] = []
+    throttle_chop_segments = []
+    throttle_chop_builder = None
+    previous_throttle_for_chop: float | None = None
     blackbox_settings: dict[str, Any] = {}
 
     with csv_path.open(newline="", errors="replace") as handle:
@@ -236,6 +240,57 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
                     armed_builder["samples"] += 1
                     armed_builder["detection_methods"].add(current_detection_method)
 
+                motor_outputs = [value for name, value in numeric.items() if name.startswith("motor[")]
+                hang_active = throttle is not None and throttle <= 1020.0 and any(value > ACTIVE_MOTOR_THRESHOLD for value in motor_outputs)
+                if hang_active:
+                    if throttle_chop_builder is None or time_value - throttle_chop_builder["last_time_us"] > SEGMENT_GAP_US:
+                        if throttle_chop_builder is not None:
+                            throttle_chop_segments.append(throttle_chop_builder)
+                        throttle_chop_builder = {
+                            "start_time_us": time_value,
+                            "end_time_us": time_value,
+                            "last_time_us": time_value,
+                            "start_row": row_count,
+                            "end_row": row_count,
+                            "samples": 0,
+                            "throttle_before_drop": previous_throttle_for_chop,
+                            "throttle_min": throttle,
+                            "max_motor": None,
+                            "motor_sum_above_idle": 0.0,
+                            "motor_samples_above_idle": 0,
+                            "pid_abs_sums": {axis: {term: 0.0 for term in ("P", "I", "D", "F")} for axis in AXES.values()},
+                            "pid_abs_max": {axis: {term: 0.0 for term in ("P", "I", "D", "F")} for axis in AXES.values()},
+                            "pid_samples": {axis: 0 for axis in AXES.values()},
+                        }
+                    throttle_chop_builder["end_time_us"] = time_value
+                    throttle_chop_builder["last_time_us"] = time_value
+                    throttle_chop_builder["end_row"] = row_count
+                    throttle_chop_builder["samples"] += 1
+                    throttle_chop_builder["throttle_min"] = min(throttle_chop_builder["throttle_min"], throttle)
+                    if motor_outputs:
+                        row_max_motor = max(motor_outputs)
+                        throttle_chop_builder["max_motor"] = row_max_motor if throttle_chop_builder["max_motor"] is None else max(throttle_chop_builder["max_motor"], row_max_motor)
+                        above_idle = [value for value in motor_outputs if value > ACTIVE_MOTOR_THRESHOLD]
+                        throttle_chop_builder["motor_sum_above_idle"] += sum(above_idle)
+                        throttle_chop_builder["motor_samples_above_idle"] += len(above_idle)
+                    for index, axis in AXES.items():
+                        saw_pid = False
+                        for term, field in (("P", f"axisP[{index}]"), ("I", f"axisI[{index}]"), ("D", f"axisD[{index}]"), ("F", f"axisF[{index}]")):
+                            value = numeric.get(field)
+                            if value is None:
+                                continue
+                            saw_pid = True
+                            abs_value = abs(value)
+                            throttle_chop_builder["pid_abs_sums"][axis][term] += abs_value
+                            throttle_chop_builder["pid_abs_max"][axis][term] = max(throttle_chop_builder["pid_abs_max"][axis][term], abs_value)
+                        if saw_pid:
+                            throttle_chop_builder["pid_samples"][axis] += 1
+                elif throttle_chop_builder is not None:
+                    throttle_chop_segments.append(throttle_chop_builder)
+                    throttle_chop_builder = None
+                if throttle is not None:
+                    previous_throttle_for_chop = throttle
+
                 if throttle is not None:
                     throttle_bin = _throttle_bin_label(throttle)
                     if throttle_bin is not None:
@@ -287,6 +342,18 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
                                 "dterm_sum_abs_delta": 0.0,
                                 "dterm_max_abs_delta": 0.0,
                                 "dterm_delta_samples": 0,
+                                "cross_axis": {
+                                    other_axis: {
+                                        "samples": 0,
+                                        "gyro_sum_abs": 0.0,
+                                        "gyro_max_abs": 0.0,
+                                        "setpoint_max_abs": 0.0,
+                                        "pid_abs_sums": {term: 0.0 for term in ("P", "I", "D", "F")},
+                                        "pid_abs_max": {term: 0.0 for term in ("P", "I", "D", "F")},
+                                    }
+                                    for other_axis in AXES.values()
+                                    if other_axis != axis
+                                },
                             }
                         builder["end_time_us"] = time_value
                         builder["last_time_us"] = time_value
@@ -312,6 +379,25 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
                             builder["dterm_delta_samples"] += 1
                         if saturated_this_row:
                             builder["motor_saturation_samples"] += 1
+                        for other_index, other_axis in AXES.items():
+                            if other_axis == axis:
+                                continue
+                            other_setpoint = numeric.get(f"setpoint[{other_index}]")
+                            other_gyro = numeric.get(f"gyroADC[{other_index}]")
+                            if other_setpoint is None or other_gyro is None or abs(other_setpoint) > 50.0:
+                                continue
+                            cross = builder["cross_axis"][other_axis]
+                            cross["samples"] += 1
+                            cross["gyro_sum_abs"] += abs(other_gyro)
+                            cross["gyro_max_abs"] = max(cross["gyro_max_abs"], abs(other_gyro))
+                            cross["setpoint_max_abs"] = max(cross["setpoint_max_abs"], abs(other_setpoint))
+                            for term, field in (("P", f"axisP[{other_index}]"), ("I", f"axisI[{other_index}]"), ("D", f"axisD[{other_index}]"), ("F", f"axisF[{other_index}]")):
+                                value = numeric.get(field)
+                                if value is None:
+                                    continue
+                                abs_value = abs(value)
+                                cross["pid_abs_sums"][term] += abs_value
+                                cross["pid_abs_max"][term] = max(cross["pid_abs_max"][term], abs_value)
                         high_rate_builders[axis] = builder
 
                 if time_value is not None:
@@ -360,6 +446,8 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
             high_rate_segments.append(builder)
     if throttle_builder is not None:
         throttle_segments.append(throttle_builder)
+    if throttle_chop_builder is not None:
+        throttle_chop_segments.append(throttle_chop_builder)
     if armed_builder is not None:
         armed_segments.append(armed_builder)
 
@@ -400,11 +488,69 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
                     "dterm_max_abs_delta": item.pop("dterm_max_abs_delta"),
                     "dterm_delta_samples": dterm_delta_samples,
                 })
+                cross_axis = item.pop("cross_axis", {})
+                item["cross_axis"] = {}
+                for other_axis, cross in cross_axis.items():
+                    cross_samples = cross["samples"]
+                    item["cross_axis"][other_axis] = {
+                        "samples": cross_samples,
+                        "gyro_mean_abs": cross["gyro_sum_abs"] / cross_samples if cross_samples else None,
+                        "gyro_max_abs": cross["gyro_max_abs"] if cross_samples else None,
+                        "setpoint_max_abs": cross["setpoint_max_abs"] if cross_samples else None,
+                        "pid_terms": {
+                            term: {
+                                "mean_abs": cross["pid_abs_sums"][term] / cross_samples if cross_samples else None,
+                                "max_abs": cross["pid_abs_max"][term] if cross_samples else None,
+                            }
+                            for term in ("P", "I", "D", "F")
+                        },
+                    }
+            finished.append(item)
+        return finished
+
+    def finish_throttle_chop_segments(segments):
+        finished = []
+        for segment in segments:
+            duration_us = segment["end_time_us"] - segment["start_time_us"]
+            if duration_us < 20_000.0:
+                continue
+            motor_samples = segment["motor_samples_above_idle"]
+            pid_terms = {}
+            for axis, samples in segment["pid_samples"].items():
+                pid_terms[axis] = {
+                    term: {
+                        "mean_abs": segment["pid_abs_sums"][axis][term] / samples if samples else None,
+                        "max_abs": segment["pid_abs_max"][axis][term] if samples else None,
+                    }
+                    for term in ("P", "I", "D", "F")
+                }
+            item = {
+                "start_row": segment["start_row"],
+                "end_row": segment["end_row"],
+                "samples": segment["samples"],
+                "start_time_seconds": segment["start_time_us"] / 1_000_000.0,
+                "end_time_seconds": segment["end_time_us"] / 1_000_000.0,
+                "duration_seconds": duration_us / 1_000_000.0,
+                "throttle_before_drop": segment["throttle_before_drop"],
+                "throttle_min": segment["throttle_min"],
+                "max_motor": segment["max_motor"],
+                "mean_motor_above_idle": segment["motor_sum_above_idle"] / motor_samples if motor_samples else None,
+                "motor_samples_above_idle": motor_samples,
+                "pid_terms": pid_terms,
+                "raw_data_ref": {
+                    "csv_path": str(csv_path),
+                    "start_row": segment["start_row"],
+                    "end_row": segment["end_row"],
+                    "start_time_seconds": segment["start_time_us"] / 1_000_000.0,
+                    "end_time_seconds": segment["end_time_us"] / 1_000_000.0,
+                },
+            }
             finished.append(item)
         return finished
 
     high_rate_segments = finish_segments(high_rate_segments)
     throttle_segments = finish_segments(throttle_segments)
+    throttle_chop_segments = finish_throttle_chop_segments(throttle_chop_segments)
 
     def finish_armed_segments(segments):
         finished = []
@@ -508,6 +654,51 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
             },
         }
 
+    throttle_chop_analysis = {
+        "available": "rcCommand[3]" in fields and any(field.startswith("motor[") for field in fields),
+        "segments": throttle_chop_segments,
+        "summary": {
+            "segment_count": len(throttle_chop_segments),
+            "max_duration_seconds": max((segment["duration_seconds"] for segment in throttle_chop_segments), default=0.0),
+            "max_motor": max((segment["max_motor"] for segment in throttle_chop_segments if segment["max_motor"] is not None), default=None),
+        },
+        "warnings": [],
+    }
+    if not throttle_chop_analysis["available"]:
+        throttle_chop_analysis["warnings"].append("Throttle-chop analysis requires rcCommand[3] and motor fields")
+    elif throttle_chop_segments:
+        throttle_chop_analysis["warnings"].append("Detected throttle-min windows with motors above idle")
+
+    roll_flip_segments = []
+    for segment in high_rate_segments:
+        if segment.get("axis") != "roll":
+            continue
+        cross_axis = segment.get("cross_axis") if isinstance(segment.get("cross_axis"), dict) else {}
+        disturbance = max(
+            (axis_data.get("gyro_max_abs") or 0.0 for axis_data in cross_axis.values() if isinstance(axis_data, dict)),
+            default=0.0,
+        )
+        roll_flip_segments.append({
+            "start_time_seconds": segment.get("start_time_seconds"),
+            "end_time_seconds": segment.get("end_time_seconds"),
+            "duration_seconds": segment.get("duration_seconds"),
+            "roll_tracking": segment.get("tracking"),
+            "motor_saturation_samples": segment.get("motor_saturation_samples"),
+            "cross_axis": cross_axis,
+            "max_cross_axis_gyro": disturbance,
+            "raw_data_ref": segment.get("raw_data_ref"),
+        })
+    cross_axis_flip_analysis = {
+        "available": bool(roll_flip_segments),
+        "segments": roll_flip_segments,
+        "summary": {
+            "roll_flip_segment_count": len(roll_flip_segments),
+            "max_cross_axis_gyro": max((segment["max_cross_axis_gyro"] for segment in roll_flip_segments), default=None),
+            "motor_saturation_samples": sum(segment.get("motor_saturation_samples") or 0 for segment in roll_flip_segments),
+        },
+        "warnings": [] if roll_flip_segments else ["No roll high-rate segments found for cross-axis flip analysis"],
+    }
+
     has_motor = any(field.startswith("motor[") for field in fields)
     has_pid_terms = all(any(field.startswith(prefix) for field in fields) for prefix in ("axisP[", "axisI[", "axisD["))
     quality_warnings = list(warnings)
@@ -551,6 +742,9 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
         "fields": fields,
         "field_count": len(fields),
         "blackbox_settings": blackbox_settings,
+        "config_snapshot": _config_snapshot({"blackbox_settings": blackbox_settings}),
+        "start_time_seconds": first_time / 1_000_000.0 if first_time is not None else None,
+        "end_time_seconds": last_time / 1_000_000.0 if last_time is not None else None,
         "duration_seconds": duration_seconds,
         "ranges": ranges,
         "quality": {
@@ -587,9 +781,12 @@ def analyze_csv_log(path: str | Path, *, max_rows: int | None = None) -> dict[st
         "motor_analysis": motor_analysis,
         "pid_term_analysis": pid_term_analysis,
         "chirp_analysis": chirp_analysis,
+        "throttle_chop_analysis": throttle_chop_analysis,
+        "cross_axis_flip_analysis": cross_axis_flip_analysis,
         "segments": {
             "high_rate": high_rate_segments,
             "throttle_punch": throttle_segments,
+            "throttle_chop": throttle_chop_segments,
             "chirp": chirp_analysis.get("segments", []),
         },
         "warnings": warnings,

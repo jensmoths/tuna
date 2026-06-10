@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from tuna_core.services.analysis import analyze_imported_log, decode_imported_log
+from tuna_core.services.analysis import analyze_imported_log, decode_imported_log, latest_analysis, list_recordings
 from tuna_core.services.builds import create_build
 from tuna_core.services.diagnoses import record_diagnosis
 from tuna_core.services.iterations import complete_no_change, complete_no_change_with_diagnosis, create_iteration
@@ -20,6 +20,7 @@ from tuna_core.services.operator_tasks import create_build_confirmation_task, cr
 from tuna_core.services.resume import update_loop_resume_cursor
 from tuna_core.services.tune_updates import approve_for_write, mark_applied, propose_tune_update, reject, record_application_failure
 from tuna_core.storage import connect, init_db
+from tuna_blackbox.analysis_views import compare_analyses, limited_events
 
 
 def _env_default(name: str, fallback: str) -> str:
@@ -144,6 +145,20 @@ def _compact_segment(segment: dict[str, Any]) -> dict[str, Any]:
     return compact
 
 
+def _summary_config_snapshot(conn: Any, log_id: int, analysis: dict[str, Any]) -> dict[str, Any] | None:
+    snapshot = analysis.get("config_snapshot") if isinstance(analysis.get("config_snapshot"), dict) else None
+    if snapshot and snapshot.get("available"):
+        return snapshot
+    row = conn.execute("SELECT metadata_json FROM blackbox_logs WHERE id = ?", (log_id,)).fetchone()
+    if row is None:
+        return snapshot
+    metadata = _loads_json_object(row["metadata_json"])
+    pids = metadata.get("pids") if isinstance(metadata.get("pids"), dict) else {}
+    if pids:
+        return {"available": True, "pids": pids, "settings": {}}
+    return snapshot
+
+
 def _analysis_summary_payload(conn: Any, log_id: int) -> dict[str, Any]:
     row = conn.execute(
         "SELECT id, analyzed_at, analysis_json FROM log_analyses WHERE log_id = ? ORDER BY analyzed_at DESC, id DESC LIMIT 1",
@@ -168,10 +183,13 @@ def _analysis_summary_payload(conn: Any, log_id: int) -> dict[str, Any]:
         "warnings": analysis.get("warnings", []),
         "activity": analysis.get("activity"),
         "flight": analysis.get("flight"),
+        "config_snapshot": _summary_config_snapshot(conn, log_id, analysis),
         "segment_counts": segment_counts,
         "segment_examples": segment_examples,
-        "pid_term_summary": analysis.get("pid_term_summary"),
-        "motor_summary": analysis.get("motor_summary"),
+        "pid_term_analysis": analysis.get("pid_term_analysis"),
+        "motor_analysis": analysis.get("motor_analysis"),
+        "throttle_chop_analysis": limited_events(analysis.get("throttle_chop_analysis", {}), "segments", 3),
+        "cross_axis_flip_analysis": limited_events(analysis.get("cross_axis_flip_analysis", {}), "segments", 3),
         "chirp_analysis": analysis.get("chirp_analysis"),
     }
 
@@ -292,6 +310,23 @@ def main(argv: list[str] | None = None) -> int:
     analysis_segment_rows.add_argument("--pad-rows", type=int, default=0)
     analysis_segment_rows.add_argument("--max-rows", type=int, default=500)
     _add_json(analysis_segment_rows)
+    analysis_recordings = analysis_sub.add_parser("recordings", aliases=["list-recordings"])
+    analysis_recordings.add_argument("--log-id", type=int, required=True)
+    analysis_recordings.add_argument("--sort", choices=["decoded", "start-time", "activity"], default="decoded")
+    analysis_recordings.add_argument("--limit", type=int)
+    _add_json(analysis_recordings)
+    analysis_compare = analysis_sub.add_parser("compare")
+    analysis_compare.add_argument("--before-log-id", type=int, required=True)
+    analysis_compare.add_argument("--after-log-id", type=int, required=True)
+    _add_json(analysis_compare)
+    analysis_throttle_chop = analysis_sub.add_parser("throttle-chop")
+    analysis_throttle_chop.add_argument("--log-id", type=int, required=True)
+    analysis_throttle_chop.add_argument("--limit", type=int, default=5)
+    _add_json(analysis_throttle_chop)
+    analysis_cross_axis_flip = analysis_sub.add_parser("cross-axis-flip")
+    analysis_cross_axis_flip.add_argument("--log-id", type=int, required=True)
+    analysis_cross_axis_flip.add_argument("--limit", type=int, default=5)
+    _add_json(analysis_cross_axis_flip)
 
     iteration = top.add_parser("iteration")
     iteration_sub = iteration.add_subparsers(dest="action", required=True)
@@ -508,7 +543,19 @@ def main(argv: list[str] | None = None) -> int:
     elif args.area == "analysis" and args.action == "decode-analyze":
         try:
             decoded = decode_imported_log(conn, args.log_id, output_dir=args.output_dir, decoder_command=args.decoder_command)
-            payload = analyze_imported_log(conn, args.log_id, csv_path=decoded["csv_path"])
+            decoded_recordings = decoded.get("recordings") if isinstance(decoded.get("recordings"), list) else []
+            csv_paths = [item.get("csv_path") for item in decoded_recordings if isinstance(item, dict) and item.get("csv_path")]
+            if not csv_paths:
+                csv_paths = [decoded["csv_path"]]
+            payload = None
+            recording_summaries = []
+            for csv_path in dict.fromkeys(str(path) for path in csv_paths):
+                analysis_payload = analyze_imported_log(conn, args.log_id, csv_path=csv_path)
+                recording_summaries.append({"csv_path": csv_path, "row_count": analysis_payload.get("row_count"), "duration_seconds": analysis_payload.get("duration_seconds"), "quality": analysis_payload.get("quality")})
+                if csv_path == str(decoded["csv_path"]):
+                    payload = analysis_payload
+            if payload is None:
+                payload = analyze_imported_log(conn, args.log_id, csv_path=decoded["csv_path"])
         except (OSError, RuntimeError, ValueError) as exc:
             _emit_command_error(exc, args.json)
             return 1
@@ -520,6 +567,7 @@ def main(argv: list[str] | None = None) -> int:
             output_json_file=output_json_file,
             csv_path=str(decoded["csv_path"]),
         )
+        concise_payload["recordings"] = recording_summaries
         if args.json:
             _print_json(payload if args.full_json else concise_payload)
         else:
@@ -543,6 +591,42 @@ def main(argv: list[str] | None = None) -> int:
             _print_json(payload)
         else:
             print(len(payload["rows"]))
+    elif args.area == "analysis" and args.action in {"recordings", "list-recordings"}:
+        try:
+            payload = list_recordings(conn, args.log_id, sort=args.sort, limit=args.limit)
+        except (json.JSONDecodeError, ValueError) as exc:
+            _emit_command_error(exc, args.json)
+            return 1
+        _print_json(payload)
+    elif args.area == "analysis" and args.action == "compare":
+        try:
+            before_id, before_at, before = latest_analysis(conn, args.before_log_id)
+            after_id, after_at, after = latest_analysis(conn, args.after_log_id)
+            payload = compare_analyses(before, after)
+            payload["before"].update({"log_id": args.before_log_id, "analysis_id": before_id, "analyzed_at": before_at})
+            payload["after"].update({"log_id": args.after_log_id, "analysis_id": after_id, "analyzed_at": after_at})
+        except (json.JSONDecodeError, ValueError) as exc:
+            _emit_command_error(exc, args.json)
+            return 1
+        _print_json(payload)
+    elif args.area == "analysis" and args.action == "throttle-chop":
+        try:
+            analysis_id, analyzed_at, analysis = latest_analysis(conn, args.log_id)
+            payload = limited_events(analysis.get("throttle_chop_analysis", {"available": False, "warnings": ["Analysis does not include throttle-chop data"]}), "segments", args.limit)
+            payload.update({"log_id": args.log_id, "analysis_id": analysis_id, "analyzed_at": analyzed_at})
+        except (json.JSONDecodeError, ValueError) as exc:
+            _emit_command_error(exc, args.json)
+            return 1
+        _print_json(payload)
+    elif args.area == "analysis" and args.action == "cross-axis-flip":
+        try:
+            analysis_id, analyzed_at, analysis = latest_analysis(conn, args.log_id)
+            payload = limited_events(analysis.get("cross_axis_flip_analysis", {"available": False, "warnings": ["Analysis does not include cross-axis flip data"]}), "segments", args.limit)
+            payload.update({"log_id": args.log_id, "analysis_id": analysis_id, "analyzed_at": analyzed_at})
+        except (json.JSONDecodeError, ValueError) as exc:
+            _emit_command_error(exc, args.json)
+            return 1
+        _print_json(payload)
     elif args.area == "analysis" and args.action == "summary":
         try:
             payload = _analysis_summary_payload(conn, args.log_id)
