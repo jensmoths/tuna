@@ -4,12 +4,12 @@ import csv
 import math
 
 from tests.analysis_helpers import AnalysisTestCase
-from tune.analysis.csv_summary import analyze_csv_log
-from tune.services.analysis import analyze_imported_log
-from tune.services.builds import create_build
-from tune.services.logs import import_blackbox_log
-from tune.services.segment_rows import get_segment_rows
-from tune.storage import connect, init_db
+from tuna_blackbox.csv_summary import analyze_csv_log
+from tuna_core.services.analysis import analyze_imported_log
+from tuna_core.services.builds import create_build
+from tuna_core.services.logs import import_blackbox_log
+from tuna_core.services.segment_rows import get_segment_rows
+from tuna_core.storage import connect, init_db
 
 
 class ChirpAnalysisTests(AnalysisTestCase):

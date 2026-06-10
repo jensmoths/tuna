@@ -10,16 +10,16 @@ except ModuleNotFoundError as exc:
     raise unittest.SkipTest("Flask is not installed") from exc
 from pathlib import Path
 
-from tune.services.builds import create_build
-from tune.services.diagnoses import record_diagnosis
-from tune.services.iterations import complete_no_change, create_iteration
-from tune.services.loops import create_loop
-from tune.services.operator_notifications import create_blackbox_config_notification
-from tune.services.operator_tasks import create_build_confirmation_task, create_flight_capture_task, create_task, create_tune_goal_task, resolve_task
-from tune.services.tune_updates import propose_tune_update
-from tune.storage import connect, init_db
-from tune.services.analysis import analyze_imported_log
-from tune.web.app import create_app
+from tuna_core.services.builds import create_build
+from tuna_core.services.diagnoses import record_diagnosis
+from tuna_core.services.iterations import complete_no_change, create_iteration
+from tuna_core.services.loops import create_loop
+from tuna_core.services.operator_notifications import create_blackbox_config_notification
+from tuna_core.services.operator_tasks import create_build_confirmation_task, create_flight_capture_task, create_task, create_tune_goal_task, resolve_task
+from tuna_core.services.tune_updates import propose_tune_update
+from tuna_core.storage import connect, init_db
+from tuna_core.services.analysis import analyze_imported_log
+from tuna_console.web.app import create_app
 
 
 class OperatorWebTests(unittest.TestCase):
@@ -59,7 +59,7 @@ class OperatorWebTests(unittest.TestCase):
 
     def test_analysis_pages_show_latest_analysis(self):
         build_id = create_build(self.conn, "5 inch")
-        from tune.services.logs import import_blackbox_log
+        from tuna_core.services.logs import import_blackbox_log
         imported_log_id = import_blackbox_log(self.conn, "reference-logs/btfl_001.bbl", build_id=build_id, storage_dir=self.root / "logs")
         csv_path = self.root / "summary.csv"
         csv_path.write_text("time,gyroADC[0],gyroADC[1],gyroADC[2],setpoint[0],setpoint[1],setpoint[2],motor[0],axisP[0],axisI[0],axisD[0]\n0,0,0,0,0,0,0,1000,0,0,0\n6000000,10,0,0,20,0,0,1200,1,1,1\n")
@@ -346,7 +346,7 @@ class OperatorWebTests(unittest.TestCase):
     def test_loop_pages_show_iteration_diagnosis_and_no_change_result(self):
         build_id = create_build(self.conn, "5 inch", fc_snapshot={"fc_variant": "BTFL"}, operator_notes="Operator-confirmed Build")
         loop_id = create_loop(self.conn, build_id, "baseline")
-        from tune.services.logs import import_blackbox_log
+        from tuna_core.services.logs import import_blackbox_log
         imported_log_id = import_blackbox_log(self.conn, "reference-logs/btfl_001.bbl", build_id=build_id, storage_dir=self.root / "logs")
         iteration_id = create_iteration(self.conn, loop_id, [imported_log_id])
         record_diagnosis(self.conn, iteration_id, "No safe Tune Update yet", confidence="low", evidence={"log_ids": [imported_log_id]})
@@ -384,7 +384,7 @@ class OperatorWebTests(unittest.TestCase):
 
         detail = client.get(f"/loops/{loop['id']}")
         self.assertIn(b"Close Loop", detail.data)
-        from tune.services.operator_tasks import create_flight_capture_task
+        from tuna_core.services.operator_tasks import create_flight_capture_task
         task_id = create_flight_capture_task(self.conn, build_id=build_id, loop_id=loop["id"])
         close_response = client.post(f"/loops/{loop['id']}/close")
         self.assertEqual(close_response.status_code, 302)

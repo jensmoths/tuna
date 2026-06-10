@@ -1,13 +1,26 @@
 [project]
-name = "tuna-tune"
+name = "tuna"
 version = "0.1.0"
-description = "Tuna durable state and helper tooling"
+description = "Tuna drone tuning tools"
 requires-python = ">=3.10"
 dependencies = ["Flask>=3.0", "numpy>=1.26", "pyserial>=3.5"]
 
 [project.scripts]
-tune = "tune.cli.main:main"
+tuna-core = "tuna_core.cli.main:main"
+tuna-console = "tuna_console.cli:main"
+tuna-fcs = "tuna_fcs.cli:main"
+tuna-blackbox = "tuna_blackbox.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["tuna_core*", "tuna_console*", "tuna_fcs*", "tuna_blackbox*", "skills*"]
+
+[tool.setuptools.package-data]
+tuna_fcs = ["README.md"]
+tuna_blackbox = ["README.md"]
+tuna_console = ["web/templates/*.html"]
+tuna_core = ["storage/schema.sql"]
+skills = ["*/SKILL.md"]
 
 [tool.pytest.ini_options]
-pythonpath = [".", "fcs-host"]
-testpaths = ["tests", "fcs-host/tests"]
+pythonpath = ["."]
+testpaths = ["tests"]

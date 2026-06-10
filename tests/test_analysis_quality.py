@@ -4,7 +4,7 @@ import csv
 import unittest
 
 from tests.analysis_helpers import AnalysisTestCase
-from tune.analysis.csv_summary import analyze_csv_log
+from tuna_blackbox.csv_summary import analyze_csv_log
 
 
 class AnalysisQualityTests(AnalysisTestCase):

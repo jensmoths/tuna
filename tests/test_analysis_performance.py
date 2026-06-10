@@ -7,8 +7,8 @@ import time
 import unittest
 from pathlib import Path
 
-from tune.analysis.csv_summary import analyze_csv_log
-from tune.analysis.segment_rows import read_segment_rows
+from tuna_blackbox.csv_summary import analyze_csv_log
+from tuna_blackbox.segment_rows import read_segment_rows
 
 
 LARGE_CSV_ROWS = 20_000

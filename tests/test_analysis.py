@@ -5,14 +5,14 @@ import unittest
 from unittest.mock import patch
 
 from tests.analysis_helpers import AnalysisTestCase
-from tune.analysis.csv_summary import analyze_csv_log
-from tune.analysis.decode import BlackboxDecodeError, decode_blackbox_log
-from tune.analysis.segment_rows import read_segment_rows
-from tune.services.analysis import analyze_imported_log, decode_imported_log
-from tune.services.builds import create_build
-from tune.services.logs import import_blackbox_log
-from tune.services.segment_rows import get_segment_rows
-from tune.storage import connect, init_db
+from tuna_blackbox.csv_summary import analyze_csv_log
+from tuna_blackbox.decode import BlackboxDecodeError, decode_blackbox_log
+from tuna_blackbox.segment_rows import read_segment_rows
+from tuna_core.services.analysis import analyze_imported_log, decode_imported_log
+from tuna_core.services.builds import create_build
+from tuna_core.services.logs import import_blackbox_log
+from tuna_core.services.segment_rows import get_segment_rows
+from tuna_core.storage import connect, init_db
 
 
 class AnalysisTests(AnalysisTestCase):
@@ -109,7 +109,7 @@ class AnalysisTests(AnalysisTestCase):
         log_id = import_blackbox_log(conn, "reference-logs/btfl_001.bbl", build_id=build_id, storage_dir=self.root / "logs")
         csv_path = self.write_csv()
 
-        with patch("tune.services.analysis.decode_blackbox_log", return_value=csv_path):
+        with patch("tuna_core.services.analysis.decode_blackbox_log", return_value=csv_path):
             decoded = decode_imported_log(conn, log_id, output_dir=self.root / "decoded")
         self.assertEqual(decoded["csv_path"], str(csv_path))
 

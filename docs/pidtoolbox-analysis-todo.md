@@ -117,7 +117,7 @@ PIDtoolbox is known for spectral analysis and frequency-vs-throttle views. Tuna 
 
 ## Implemented fourth pass
 
-- Added `tune log segment-rows --log-id ... --segment-kind ... --segment-index ... --json`.
+- Added `tuna-core analysis segment-rows --log-id ... --segment-kind ... --segment-index ... --json`.
 - Segment row extraction returns selected decoded CSV rows using segment `raw_data_ref`.
 - Supports selected fields, row padding, and max row limits so the **Tuning Agent** can inspect maneuver source data without loading an entire CSV.
 

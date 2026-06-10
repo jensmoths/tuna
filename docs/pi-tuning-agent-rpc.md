@@ -19,12 +19,12 @@ See `docs/domain-model.md` for canonical Tuna vocabulary and domain rules.
 
 ### Skill
 
-`tune/agent/SKILL.md` is the **Tuning Agent** job description and operating
+`skills/tuna-agent/SKILL.md` is the **Tuning Agent** job description and operating
 procedure. It owns instructions for:
 
 - Tuna vocabulary and domain rules.
 - Safe **Tuning Agent** behavior.
-- Use of `tune` for durable state and domain-rule enforcement.
+- Use of `tuna-core` for durable state and domain-rule enforcement.
 - Use of **FCS** for flight-controller operations.
 - When to create or resume a **Loop**.
 - When to start a **Tuning Iteration**.
@@ -34,7 +34,7 @@ procedure. It owns instructions for:
 - When to create **Operator Tasks** and **Operator Notifications**.
 
 At runtime, the supervisor starts Pi with `--no-context-files` and
-`--no-skills`, then injects the contents of `tune/agent/SKILL.md` into the
+`--no-skills`, then injects the contents of `skills/tuna-agent/SKILL.md` into the
 prompt. This gives the **Tuning Agent** the Tuna operating procedure without
 loading repository context files or global/project skills.
 
@@ -60,9 +60,9 @@ The supervisor must not become the workflow brain. It should not decide which
 **Blackbox Logs** belong to a **Tuning Iteration**, whether a **Tune Update** is
 needed, or what tuning values to propose.
 
-### `tune`
+### `tuna-core`
 
-`tune` remains the durable state, domain-rules, parsing, and helper-tool layer.
+`tuna-core` remains the durable state, domain-rules, parsing, and helper-tool layer.
 It records **Builds**, **Loops**, imported **Blackbox Logs**, **Tuning
 Iterations**, **Diagnoses**, **Tune Updates**, **Operator Tasks**, and
 **Operator Notifications**. It must not decide what action happens next in a
@@ -116,7 +116,7 @@ instructions below; do not load skills, context files, source files, or
 repository documentation during normal Loop operation.
 
 Injected Tuna Tuning Agent operating instructions:
-<contents of tune/agent/SKILL.md injected by supervisor>
+<contents of skills/tuna-agent/SKILL.md injected by supervisor>
 
 Runtime Loop assignment:
 
@@ -128,7 +128,7 @@ Tune Goal: reduce propwash while preserving freestyle response
 FCS Bridge host: tuna-bridge-usb
 
 First:
-1. Inspect Tuna state with `python3 -m tune loop context --loop-id <id> --json` when a Loop exists, or concise JSON tune commands otherwise.
+1. Inspect Tuna state with `python3 -m tuna_core loop context --loop-id <id> --json` when a Loop exists, or concise JSON tuna-core commands otherwise.
 2. Confirm whether the Build and Tune Goal are sufficient.
 3. If needed, create Operator Tasks.
 4. If sufficient, create or resume the Loop.
@@ -141,7 +141,7 @@ Do not read source code during normal Loop operation; use CLI help if syntax is 
 ```
 
 The prompt gives context; it does not prescribe the full workflow outcome. The
-**Tuning Agent** decides next steps using the skill, `tune`, and FCS.
+**Tuning Agent** decides next steps using the skill, `tuna-core`, and FCS.
 
 ## Status-only Operator Console
 
@@ -200,8 +200,8 @@ Read/write operation is allowed in v1, but these gates are mandatory:
 - Approval in the **Operator Console** means approved for **Tuning Agent**
   write-back through **FCS**, not already applied.
 - The **Operator Console** does not perform flight-controller write-back.
-- The **Tuning Agent** records successful write-back with `tune update apply` or
-  records failure with `tune update record-write-failure`.
+- The **Tuning Agent** records successful write-back with `tuna-core update apply` or
+  records failure with `tuna-core update record-write-failure`.
 - The **Tuning Agent** must not erase FC **Blackbox Log** copies until transfer
   validation, **Host Computer** retention, and **Import** have succeeded.
 - Diagnostic-only Blackbox/logging configuration changes made through **FCS**

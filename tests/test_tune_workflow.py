@@ -5,14 +5,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tune.blackbox import parse_blackbox_metadata
-from tune.services.builds import create_build
-from tune.services.diagnoses import record_diagnosis
-from tune.services.iterations import complete_no_change, create_iteration
-from tune.services.logs import import_blackbox_log
-from tune.services.loops import create_loop
-from tune.services.tune_updates import mark_applied, propose_tune_update, reject
-from tune.storage import connect, init_db
+from tuna_blackbox import parse_blackbox_metadata
+from tuna_core.services.builds import create_build
+from tuna_core.services.diagnoses import record_diagnosis
+from tuna_core.services.iterations import complete_no_change, create_iteration
+from tuna_core.services.logs import import_blackbox_log
+from tuna_core.services.loops import create_loop
+from tuna_core.services.tune_updates import mark_applied, propose_tune_update, reject
+from tuna_core.storage import connect, init_db
 
 
 class TuneWorkflowTests(unittest.TestCase):

@@ -11,7 +11,8 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import ANY, patch
 
-from tune.cli.main import main
+from tuna_core.cli.main import main
+from tuna_console.cli import main as console_main
 
 
 class TuneCliTests(unittest.TestCase):
@@ -38,7 +39,7 @@ class TuneCliTests(unittest.TestCase):
 
     def test_python_module_entrypoint_shows_help(self):
         result = subprocess.run(
-            [sys.executable, "-m", "tune", "--help"],
+            [sys.executable, "-m", "tuna_core", "--help"],
             cwd=Path.cwd(),
             text=True,
             capture_output=True,
@@ -46,7 +47,7 @@ class TuneCliTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0)
-        self.assertIn("Tune helper tool", result.stdout)
+        self.assertIn("Tuna Core helper tool", result.stdout)
 
     def test_web_cli_enables_verbose_mode(self):
         class FakeApp:
@@ -58,11 +59,10 @@ class TuneCliTests(unittest.TestCase):
                 self.run_kwargs = kwargs
 
         fake_app = FakeApp()
-        with patch("tune.web.app.create_app", return_value=fake_app) as create_app:
-            code = main([
+        with patch("tuna_console.cli.create_app", return_value=fake_app) as create_app:
+            code = console_main([
                 "--db",
                 str(self.db),
-                "web",
                 "--host",
                 "0.0.0.0",
                 "--port",
@@ -238,8 +238,8 @@ class TuneCliTests(unittest.TestCase):
         )
         csv_path = self.root / "decoded.csv"
         analysis = {"row_count": 1, "duration_seconds": 0.0, "quality": {"usable": False}, "warnings": []}
-        with patch("tune.cli.main.decode_imported_log", return_value={"log_id": log["log_id"], "csv_path": str(csv_path)}) as decode:
-            with patch("tune.cli.main.analyze_imported_log", return_value=analysis) as analyze:
+        with patch("tuna_core.cli.main.decode_imported_log", return_value={"log_id": log["log_id"], "csv_path": str(csv_path)}) as decode:
+            with patch("tuna_core.cli.main.analyze_imported_log", return_value=analysis) as analyze:
                 result = self.run_cli_json("analysis", "decode-analyze", "--log-id", str(log["log_id"]))
 
         decode.assert_called_once()

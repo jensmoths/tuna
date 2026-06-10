@@ -11,12 +11,12 @@ try:
 except ModuleNotFoundError as exc:
     raise unittest.SkipTest("Flask is not installed") from exc
 
-from tune.services.builds import create_build
-from tune.services.loops import create_loop
-from tune.services.operator_tasks import create_flight_capture_task
-from tune.storage import connect, init_db
-from tune.web.app import create_app
-from tune.web.pi_supervisor import PiRpcSupervisor
+from tuna_core.services.builds import create_build
+from tuna_core.services.loops import create_loop
+from tuna_core.services.operator_tasks import create_flight_capture_task
+from tuna_core.storage import connect, init_db
+from tuna_console.web.app import create_app
+from tuna_console.web.pi_supervisor import PiRpcSupervisor
 
 
 class PiSupervisorWebTests(unittest.TestCase):
@@ -51,7 +51,7 @@ class PiSupervisorWebTests(unittest.TestCase):
         app.config["TUNE_WORKDIR"] = str(self.root)
         client = app.test_client()
 
-        with patch("tune.web.pi_supervisor.subprocess.Popen", return_value=fake_process) as popen:
+        with patch("tuna_console.web.pi_supervisor.subprocess.Popen", return_value=fake_process) as popen:
             response = client.post(
                 f"/loops/{loop_id}/tuning-agent/start",
                 data={"bridge_host": "tuna-bridge-usb"},
@@ -75,11 +75,11 @@ class PiSupervisorWebTests(unittest.TestCase):
         self.assertIn('"type": "prompt"', sent)
         self.assertIn("FCS Bridge host: tuna-bridge-usb", sent)
         self.assertIn("loop status", sent)
-        self.assertIn("fcs.py inspect", sent)
+        self.assertIn("python3 -m tuna_fcs.cli inspect", sent)
         self.assertIn("do not read source code or repository docs", sent)
         self.assertIn("Injected Tuna Tuning Agent operating instructions", sent)
         self.assertIn("# Tuna Tuning Agent", sent)
-        self.assertNotIn("Use tune/agent/SKILL.md", sent)
+        self.assertNotIn("Use skills/tuna-agent/SKILL.md", sent)
         self.assertNotIn("docs/domain-model.md", sent)
         self.assertIn("confirm_build", sent)
 
@@ -125,7 +125,7 @@ class PiSupervisorWebTests(unittest.TestCase):
         self.assertIn(b'value="gpt-5.5"', page.data)
         self.assertIn(b'value="medium" selected', page.data)
 
-        with patch("tune.web.pi_supervisor.subprocess.Popen", return_value=fake_process) as popen:
+        with patch("tuna_console.web.pi_supervisor.subprocess.Popen", return_value=fake_process) as popen:
             response = client.post(
                 f"/loops/{loop_id}/tuning-agent/start",
                 data={"bridge_host": "", "pi_model": "gpt-5.5", "thinking_level": "xhigh"},
@@ -223,7 +223,7 @@ class PiSupervisorWebTests(unittest.TestCase):
         page = client.get(f"/loops/{loop_id}")
         self.assertIn(b"Resume / continue after abort", page.data)
 
-        with patch("tune.web.pi_supervisor.subprocess.Popen", return_value=fake_process) as popen:
+        with patch("tuna_console.web.pi_supervisor.subprocess.Popen", return_value=fake_process) as popen:
             response = client.post(
                 f"/loops/{loop_id}/tuning-agent/continue",
                 data={"bridge_host": "tuna-bridge-usb", "pi_model": "gpt-5.5", "thinking_level": "high"},
@@ -241,7 +241,7 @@ class PiSupervisorWebTests(unittest.TestCase):
         self.assertIn("do not read source code or repository docs", sent)
         self.assertIn("Injected Tuna Tuning Agent operating instructions", sent)
         self.assertIn("# Tuna Tuning Agent", sent)
-        self.assertNotIn("Use tune/agent/SKILL.md", sent)
+        self.assertNotIn("Use skills/tuna-agent/SKILL.md", sent)
         self.assertNotIn("docs/domain-model.md", sent)
         self.assertIn("Check open and recently resolved Operator Tasks", sent)
         self.assertIn("loop status", sent)
@@ -271,21 +271,21 @@ class PiSupervisorWebTests(unittest.TestCase):
 
         supervisor._append_debug_trace(loop_id, supervisor._trace_for_event({
             "type": "tool_execution_start",
-            "args": {"cmd": "python3 -m tune --db tune.sqlite3 analysis analyze --log-id 1 --json"},
+            "args": {"cmd": "python3 -m tuna_core --db tune.sqlite3 analysis analyze --log-id 1 --json"},
         }))
         supervisor._handle_event(loop_id, {
             "type": "tool_execution_start",
-            "args": {"cmd": "python3 -m tune --db tune.sqlite3 analysis analyze --log-id 1 --json"},
+            "args": {"cmd": "python3 -m tuna_core --db tune.sqlite3 analysis analyze --log-id 1 --json"},
         })
 
         session = self.conn.execute("SELECT status, debug_trace FROM tuning_agent_sessions WHERE loop_id = ?", (loop_id,)).fetchone()
         self.assertEqual(session["status"], "Analyzing Blackbox Log")
-        self.assertIn("tool start: python3 -m tune --db tune.sqlite3 analysis analyze", session["debug_trace"])
+        self.assertIn("tool start: python3 -m tuna_core --db tune.sqlite3 analysis analyze", session["debug_trace"])
 
         page = app.test_client().get(f"/loops/{loop_id}")
         self.assertIn(b"Analyzing Blackbox Log", page.data)
         self.assertIn(b"trace-tool", page.data)
-        self.assertIn(b"tool start: python3 -m tune --db tune.sqlite3 analysis analyze", page.data)
+        self.assertIn(b"tool start: python3 -m tuna_core --db tune.sqlite3 analysis analyze", page.data)
 
     def test_pi_rpc_streaming_updates_are_not_logged_but_message_end_is(self):
         build_id = create_build(self.conn, "5 inch")
@@ -327,7 +327,7 @@ class PiSupervisorWebTests(unittest.TestCase):
         supervisor = PiRpcSupervisor(self.db_path, cwd=self.root)
 
         message_line = supervisor._console_trace_line(4, "Tuning Agent message: Inspecting Tuna state now.")
-        tool_line = supervisor._console_trace_line(4, "tool start: python3 -m tune --db tune.sqlite3 status --json")
+        tool_line = supervisor._console_trace_line(4, "tool start: python3 -m tuna_core --db tune.sqlite3 status --json")
         supervisor_line = supervisor._console_trace_line(4, "sent initial prompt to Pi RPC")
 
         self.assertIn("[Tuna Loop #4]", message_line)
@@ -395,7 +395,7 @@ class PiSupervisorWebTests(unittest.TestCase):
             pi_session_file="saved-pi-session.jsonl",
         )
 
-        with patch("tune.web.pi_supervisor.subprocess.Popen", return_value=fake_process) as popen:
+        with patch("tuna_console.web.pi_supervisor.subprocess.Popen", return_value=fake_process) as popen:
             response = app.test_client().post(
                 f"/tasks/{task_id}/resolve-flight-capture",
                 data={"decision": "captured_needs_transfer", "notes": "Captured follow-up Blackbox Log"},

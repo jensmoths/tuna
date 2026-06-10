@@ -7,9 +7,9 @@ Use these terms in issues, tests, code, plans, and summaries.
 
 **Tuna** is the whole product/system, including the **Tuning Agent**,
 state/history, Blackbox Log handling, FCS integration, and future user
-interfaces. The `tune` Python package/CLI is only the durable state,
+interfaces. The `tuna-core` Python package/CLI is only the durable state,
 domain-rules, parsing, and helper-tool layer used by the **Tuning Agent**; do
-not treat `tune` as the whole Tuna product.
+not treat `tuna-core` as the whole Tuna product.
 
 ## Domain vocabulary
 
@@ -37,8 +37,9 @@ not treat `tune` as the whole Tuna product.
   may include PID/filter changes.
 - **FC Bridge** / **Bridge**: firmware that provides Wi-Fi access from the
   **Host Computer** to flight-controller capabilities.
-- **FC Service** / **FCS**: host-side service using the **Bridge** for
-  higher-level flight-controller operations.
+- **FC Service** / **FCS**: host-side service for higher-level
+  flight-controller operations over either the **Bridge** or direct USB from the
+  **Host Computer**.
 - **Post-flight Transfer**: transfer of completed **Blackbox Logs** after disarm;
   not live streaming.
 - **Import**: bringing a transferred **Blackbox Log** into **Tuna**, associating
@@ -51,9 +52,17 @@ not treat `tune` as the whole Tuna product.
   the **Tuning Agent** has made a diagnostic-only change, such as a
   Blackbox/logging setting change through **FCS**. It is not an **Operator Task**
   and only needs acknowledgement, not approval.
-- `tune`: Python package and helper CLI for Tuna state, domain rules,
-  deterministic Blackbox Log metadata extraction, and SQLite persistence. It is
-  a tool used by the **Tuning Agent**, not the workflow brain.
+- `tuna-core`: Python package and helper CLI for Tuna durable state, domain
+  rules, and SQLite persistence. It is a tool used by the **Tuning Agent**, not
+  the workflow brain.
+- `tuna-blackbox`: standalone Python package and helper CLI for Blackbox Log
+  metadata extraction, decode, and analysis without requiring Tuna SQLite state.
+- `tuna-fcs`: standalone Python package and helper CLI for flight-controller
+  operations over the **Bridge** or direct USB without requiring Tuna SQLite
+  state.
+- `tuna-console`: Flask Operator Console package for local Operator review and
+  task/notification responses.
+- `tuna-agent`: Tuning Agent instructions/skill package.
 
 ## Domain rules
 
@@ -61,8 +70,9 @@ not treat `tune` as the whole Tuna product.
   workflow decisions; an **Operator** performs human-only workflow actions on
   the **Host Computer**.
 - The **Tuning Agent** uses **FCS**, not raw Bridge/protocol access, for log
-  operations and write-back.
-- The **Tuning Agent** may use `tune` to query/record state, but `tune` must not
+  operations and write-back. FCS may use either the **Bridge** or direct USB from
+  the **Host Computer**.
+- The **Tuning Agent** may use `tuna-core` to query/record state, but `tuna-core` must not
   decide what action should happen next in a **Loop**.
 - The **Bridge** may expose raw flight-controller protocol access, but
   **Post-flight Transfer** must preserve logs faithfully without semantic
