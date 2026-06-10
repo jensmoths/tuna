@@ -17,7 +17,9 @@
 <div class="card">
   {% if agent_session %}
   <p><strong>Status:</strong> {{ agent_session.status }}</p>
+  <p><strong>FCS connection:</strong> {{ agent_session.fc_connection if agent_session.fc_connection else 'bridge' }}</p>
   {% if agent_session.bridge_host %}<p><strong>FCS Bridge host:</strong> {{ agent_session.bridge_host }}</p>{% endif %}
+  {% if agent_session.usb_device %}<p><strong>USB FC device:</strong> {{ agent_session.usb_device }}</p>{% endif %}
   {% if agent_session.pi_model %}<p><strong>Pi model:</strong> {{ pi_model_choices.get(agent_session.pi_model, agent_session.pi_model) }}{% if agent_session.thinking_level %} · <strong>Thinking:</strong> {{ agent_session.thinking_level }}{% endif %}</p>{% endif %}
   {% if agent_session.pi_session_file %}<p><strong>Pi session:</strong> {{ agent_session.pi_session_file }}</p>{% endif %}
   {% if agent_session.last_error %}<p><strong>Last error:</strong> {{ agent_session.last_error }}</p>{% endif %}
@@ -39,7 +41,15 @@
   {% endif %}
 
   <form method="post" action="/loops/{{ loop.id }}/tuning-agent/start">
+    {% set selected_connection = agent_session.fc_connection if agent_session and agent_session.fc_connection else default_fc_connection %}
+    <label>FC connection
+      <select name="fc_connection">
+        <option value="bridge"{% if selected_connection == 'bridge' %} selected{% endif %}>FC Bridge</option>
+        <option value="usb"{% if selected_connection == 'usb' %} selected{% endif %}>Direct USB on this Host Computer</option>
+      </select>
+    </label>
     <label>FCS Bridge host <input name="bridge_host" value="{{ agent_session.bridge_host if agent_session and agent_session.bridge_host else default_bridge_host }}"></label>
+    <label>USB FC device <input name="usb_device" placeholder="auto-detect" value="{{ agent_session.usb_device if agent_session and agent_session.usb_device else default_usb_device }}"></label>
     <label>Pi model
       <select name="pi_model">
         {% set selected_model = agent_session.pi_model if agent_session and agent_session.pi_model else default_pi_model %}

@@ -10,7 +10,9 @@ from typing import Any
 from fcs_bridge import BridgeTransport, MspClient, discover_fc_capabilities
 from fcs_bridge.blackbox_download import read_bridge_status, transfer_blackbox_log_from_bridge
 from fcs_bridge.blackbox_transfer import erase_dataflash
-from fcs_bridge.writeback import write_betaflight_cli_text_to_bridge
+from fcs_bridge.usb_blackbox import transfer_blackbox_log_from_usb
+from fcs_bridge.usb_transport import UsbSerialTransport, list_usb_fc_devices
+from fcs_bridge.writeback import write_betaflight_cli_text, write_betaflight_cli_text_to_bridge
 
 
 def _env_default(name: str, fallback: str) -> str:
@@ -25,14 +27,23 @@ def _error(exc: BaseException, *, retryable: bool = True) -> dict[str, Any]:
     return {"error": {"kind": exc.__class__.__name__, "message": str(exc), "retryable": retryable}}
 
 
-def _inspect(host: str, *, port: int, timeout_seconds: float) -> dict[str, Any]:
+def _inspect_bridge(host: str, *, port: int, timeout_seconds: float) -> dict[str, Any]:
     with BridgeTransport(host, port, timeout_seconds=timeout_seconds) as transport:
         capabilities = discover_fc_capabilities(MspClient(transport), timeout_seconds=timeout_seconds)
+    return _capabilities_payload(capabilities, connection="bridge", bridge_host=host, bridge_port=port)
+
+
+def _inspect_usb(device: str | None, *, timeout_seconds: float) -> dict[str, Any]:
+    with UsbSerialTransport(device, timeout_seconds=timeout_seconds) as transport:
+        capabilities = discover_fc_capabilities(MspClient(transport), timeout_seconds=timeout_seconds)
+    return _capabilities_payload(capabilities, connection="usb", usb_device=device or "auto")
+
+
+def _capabilities_payload(capabilities, **connection: Any) -> dict[str, Any]:
     identity = capabilities.identity
     storage = capabilities.blackbox_storage
-    return {
-        "bridge_host": host,
-        "bridge_port": port,
+    payload = {
+        **connection,
         "identity": {
             "fc_variant": identity.fc_variant,
             "fc_version": ".".join(str(part) for part in identity.fc_version),
@@ -49,6 +60,7 @@ def _inspect(host: str, *, port: int, timeout_seconds: float) -> dict[str, Any]:
             "diagnostic": storage.diagnostic,
         },
     }
+    return payload
 
 
 def _transfer_error_payload(exc: BaseException, *, output_path: Path) -> dict[str, Any]:
@@ -66,12 +78,15 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="area", required=True)
 
     inspect = sub.add_parser("inspect")
+    inspect.add_argument("--connection", choices=["bridge", "usb"], default=_env_default("FCS_CONNECTION", "bridge"))
     inspect.add_argument("--bridge-host", default=_env_default("FCS_BRIDGE_HOST", "tuna-bridge-usb"), help="FCS Bridge host (default: $FCS_BRIDGE_HOST or tuna-bridge-usb)")
+    inspect.add_argument("--usb-device", default=os.environ.get("FCS_USB_DEVICE"), help="USB serial device (default: auto-detect or $FCS_USB_DEVICE)")
     inspect.add_argument("--port", type=int, default=5761)
     inspect.add_argument("--timeout", type=float, default=2.5)
     inspect.add_argument("--json", action="store_true")
 
     status = sub.add_parser("status")
+    status.add_argument("--connection", choices=["bridge", "usb"], default=_env_default("FCS_CONNECTION", "bridge"))
     status.add_argument("--bridge-host", default=_env_default("FCS_BRIDGE_HOST", "tuna-bridge-usb"), help="FCS Bridge host (default: $FCS_BRIDGE_HOST or tuna-bridge-usb)")
     status.add_argument("--timeout", type=float, default=8.0)
     status.add_argument("--json", action="store_true")
@@ -79,7 +94,9 @@ def main(argv: list[str] | None = None) -> int:
     blackbox = sub.add_parser("blackbox")
     blackbox_sub = blackbox.add_subparsers(dest="action", required=True)
     transfer = blackbox_sub.add_parser("transfer")
+    transfer.add_argument("--connection", choices=["bridge", "usb"], default=_env_default("FCS_CONNECTION", "bridge"))
     transfer.add_argument("--bridge-host", default=_env_default("FCS_BRIDGE_HOST", "tuna-bridge-usb"), help="FCS Bridge host (default: $FCS_BRIDGE_HOST or tuna-bridge-usb)")
+    transfer.add_argument("--usb-device", default=os.environ.get("FCS_USB_DEVICE"), help="USB serial device (default: auto-detect or $FCS_USB_DEVICE)")
     transfer.add_argument("--output", required=True)
     transfer.add_argument("--size", type=int)
     transfer.add_argument("--timeout", type=float, default=60.0)
@@ -90,7 +107,9 @@ def main(argv: list[str] | None = None) -> int:
     transfer.add_argument("--progress", action="store_true")
     transfer.add_argument("--json", action="store_true")
     erase = blackbox_sub.add_parser("erase")
+    erase.add_argument("--connection", choices=["bridge", "usb"], default=_env_default("FCS_CONNECTION", "bridge"))
     erase.add_argument("--bridge-host", default=_env_default("FCS_BRIDGE_HOST", "tuna-bridge-usb"), help="FCS Bridge host (default: $FCS_BRIDGE_HOST or tuna-bridge-usb)")
+    erase.add_argument("--usb-device", default=os.environ.get("FCS_USB_DEVICE"), help="USB serial device (default: auto-detect or $FCS_USB_DEVICE)")
     erase.add_argument("--port", type=int, default=5761)
     erase.add_argument("--timeout", type=float, default=5.0)
     erase.add_argument("--confirm", required=True)
@@ -99,7 +118,9 @@ def main(argv: list[str] | None = None) -> int:
     cli = sub.add_parser("cli")
     cli_sub = cli.add_subparsers(dest="action", required=True)
     write = cli_sub.add_parser("write")
+    write.add_argument("--connection", choices=["bridge", "usb"], default=_env_default("FCS_CONNECTION", "bridge"))
     write.add_argument("--bridge-host", default=_env_default("FCS_BRIDGE_HOST", "tuna-bridge-usb"), help="FCS Bridge host (default: $FCS_BRIDGE_HOST or tuna-bridge-usb)")
+    write.add_argument("--usb-device", default=os.environ.get("FCS_USB_DEVICE"), help="USB serial device (default: auto-detect or $FCS_USB_DEVICE)")
     write.add_argument("--port", type=int, default=5761)
     write.add_argument("--timeout", type=float, default=5.0)
     write_source = write.add_mutually_exclusive_group(required=True)
@@ -111,16 +132,20 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.area == "inspect":
-            payload = _inspect(args.bridge_host, port=args.port, timeout_seconds=args.timeout)
+            payload = _inspect_usb(args.usb_device, timeout_seconds=args.timeout) if args.connection == "usb" else _inspect_bridge(args.bridge_host, port=args.port, timeout_seconds=args.timeout)
         elif args.area == "status":
-            bridge_status = read_bridge_status(args.bridge_host, timeout_seconds=args.timeout)
-            payload = {
-                "bridge_host": args.bridge_host,
-                "status_text": bridge_status.text,
-                "usb_cdc_connected": bridge_status.usb_cdc_connected,
-                "msc_raw_ready": bridge_status.msc_raw_ready,
-                "msc_mounted": bridge_status.msc_mounted,
-            }
+            if args.connection == "usb":
+                payload = {"connection": "usb", "devices": [device.__dict__ for device in list_usb_fc_devices()]}
+            else:
+                bridge_status = read_bridge_status(args.bridge_host, timeout_seconds=args.timeout)
+                payload = {
+                    "connection": "bridge",
+                    "bridge_host": args.bridge_host,
+                    "status_text": bridge_status.text,
+                    "usb_cdc_connected": bridge_status.usb_cdc_connected,
+                    "msc_raw_ready": bridge_status.msc_raw_ready,
+                    "msc_mounted": bridge_status.msc_mounted,
+                }
         elif args.area == "blackbox" and args.action == "transfer":
             def progress(event: dict[str, object]) -> None:
                 print(
@@ -129,35 +154,49 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
             output_path = Path(args.output)
-            payload = transfer_blackbox_log_from_bridge(
-                args.bridge_host,
-                output_path=output_path,
-                size=args.size,
-                trigger_msc=not args.no_trigger_msc,
-                timeout_seconds=args.timeout,
-                resume=not args.no_resume,
-                chunk_size=args.chunk_size,
-                max_attempts=args.max_attempts,
-                progress=progress if args.progress else None,
-            )
+            if args.connection == "usb":
+                payload = transfer_blackbox_log_from_usb(
+                    args.usb_device,
+                    output_path=output_path,
+                    trigger_msc=not args.no_trigger_msc,
+                    timeout_seconds=args.timeout,
+                )
+            else:
+                payload = transfer_blackbox_log_from_bridge(
+                    args.bridge_host,
+                    output_path=output_path,
+                    size=args.size,
+                    trigger_msc=not args.no_trigger_msc,
+                    timeout_seconds=args.timeout,
+                    resume=not args.no_resume,
+                    chunk_size=args.chunk_size,
+                    max_attempts=args.max_attempts,
+                    progress=progress if args.progress else None,
+                )
         elif args.area == "blackbox" and args.action == "erase":
             if args.confirm != "erase-transferred-blackbox-log":
                 raise ValueError("confirmation must be erase-transferred-blackbox-log")
-            with BridgeTransport(args.bridge_host, args.port, timeout_seconds=args.timeout) as transport:
+            transport_factory = (lambda: UsbSerialTransport(args.usb_device, timeout_seconds=args.timeout)) if args.connection == "usb" else (lambda: BridgeTransport(args.bridge_host, args.port, timeout_seconds=args.timeout))
+            with transport_factory() as transport:
                 erase_dataflash(MspClient(transport), timeout_seconds=args.timeout)
-            payload = {"bridge_host": args.bridge_host, "erased": True}
+            payload = {"connection": args.connection, "bridge_host": args.bridge_host if args.connection == "bridge" else None, "usb_device": args.usb_device if args.connection == "usb" else None, "erased": True}
         elif args.area == "cli" and args.action == "write":
             if args.confirm != "write-fc-cli":
                 raise ValueError("confirmation must be write-fc-cli")
             cli_text = args.command if args.command is not None else Path(args.cli_file).read_text()
-            result = write_betaflight_cli_text_to_bridge(args.bridge_host, args.port, cli_text, timeout_seconds=args.timeout)
-            payload = {"bridge_host": args.bridge_host, "success": result.success, "transcript": result.transcript}
+            if args.connection == "usb":
+                with UsbSerialTransport(args.usb_device, timeout_seconds=args.timeout) as transport:
+                    result = write_betaflight_cli_text(transport, cli_text, timeout_seconds=args.timeout)
+                payload = {"connection": "usb", "usb_device": args.usb_device or "auto", "success": result.success, "transcript": result.transcript}
+            else:
+                result = write_betaflight_cli_text_to_bridge(args.bridge_host, args.port, cli_text, timeout_seconds=args.timeout)
+                payload = {"connection": "bridge", "bridge_host": args.bridge_host, "success": result.success, "transcript": result.transcript}
             if not result.success:
                 _print_json(payload)
                 return 1
         else:
             return 2
-    except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
+    except (OSError, RuntimeError, TimeoutError, ValueError, ConnectionError) as exc:
         payload = _transfer_error_payload(exc, output_path=Path(args.output)) if getattr(args, "area", None) == "blackbox" and getattr(args, "action", None) == "transfer" else _error(exc)
         if getattr(args, "json", False):
             _print_json(payload)

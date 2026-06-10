@@ -217,7 +217,9 @@ def create_app(db_path: str | Path) -> Flask:
     app.config["TUNE_DB"] = str(db_path)
     app.config.setdefault("TUNE_PI_COMMAND", "pi")
     app.config.setdefault("TUNE_WORKDIR", str(Path(db_path).resolve().parent))
+    app.config.setdefault("TUNE_DEFAULT_FC_CONNECTION", os.environ.get("FCS_CONNECTION", "bridge"))
     app.config.setdefault("TUNE_DEFAULT_BRIDGE_HOST", os.environ.get("FCS_BRIDGE_HOST", "tuna-bridge-usb"))
+    app.config.setdefault("TUNE_DEFAULT_USB_DEVICE", os.environ.get("FCS_USB_DEVICE", ""))
     app.config.setdefault("TUNE_DEFAULT_PI_MODEL", "gpt-5.4-mini")
     app.config.setdefault("TUNE_DEFAULT_THINKING_LEVEL", "medium")
     app.config.setdefault("TUNE_VERBOSE", False)
@@ -377,7 +379,9 @@ def create_app(db_path: str | Path) -> Flask:
             agent_session=agent_session,
             agent_process_running=agent_process_running,
             agent_trace=agent_trace,
+            default_fc_connection=app.config["TUNE_DEFAULT_FC_CONNECTION"],
             default_bridge_host=app.config["TUNE_DEFAULT_BRIDGE_HOST"],
+            default_usb_device=app.config["TUNE_DEFAULT_USB_DEVICE"],
             default_pi_model=app.config["TUNE_DEFAULT_PI_MODEL"],
             default_thinking_level=app.config["TUNE_DEFAULT_THINKING_LEVEL"],
             pi_model_choices=PI_MODEL_CHOICES,
@@ -417,7 +421,9 @@ def create_app(db_path: str | Path) -> Flask:
             "workbench.html",
             state=state,
             builds=[],
+            default_fc_connection=app.config["TUNE_DEFAULT_FC_CONNECTION"],
             default_bridge_host=app.config["TUNE_DEFAULT_BRIDGE_HOST"],
+            default_usb_device=app.config["TUNE_DEFAULT_USB_DEVICE"],
             default_pi_model=app.config["TUNE_DEFAULT_PI_MODEL"],
             default_thinking_level=app.config["TUNE_DEFAULT_THINKING_LEVEL"],
             pi_model_choices=PI_MODEL_CHOICES,
@@ -441,7 +447,9 @@ def create_app(db_path: str | Path) -> Flask:
                             "_workbench.html",
                             state=state,
                             loop=state.get("loop"),
+                            default_fc_connection=app.config["TUNE_DEFAULT_FC_CONNECTION"],
                             default_bridge_host=app.config["TUNE_DEFAULT_BRIDGE_HOST"],
+                            default_usb_device=app.config["TUNE_DEFAULT_USB_DEVICE"],
                             default_pi_model=app.config["TUNE_DEFAULT_PI_MODEL"],
                             default_thinking_level=app.config["TUNE_DEFAULT_THINKING_LEVEL"],
                             pi_model_choices=PI_MODEL_CHOICES,
@@ -467,14 +475,18 @@ def create_app(db_path: str | Path) -> Flask:
         loop = conn.execute("SELECT id FROM loops WHERE id = ?", (loop_id,)).fetchone()
         if not loop:
             return "Loop not found", 404
+        fc_connection = request.form.get("fc_connection", "").strip() or app.config["TUNE_DEFAULT_FC_CONNECTION"]
         bridge_host = request.form.get("bridge_host", "").strip() or app.config["TUNE_DEFAULT_BRIDGE_HOST"]
+        usb_device = request.form.get("usb_device", "").strip() or app.config["TUNE_DEFAULT_USB_DEVICE"]
         pi_model = request.form.get("pi_model", "").strip() or app.config["TUNE_DEFAULT_PI_MODEL"]
         thinking_level = request.form.get("thinking_level", "").strip() or app.config["TUNE_DEFAULT_THINKING_LEVEL"]
+        if fc_connection not in {"bridge", "usb"}:
+            return "Unsupported FC connection", 400
         if pi_model not in PI_MODEL_CHOICES:
             return "Unsupported Pi model", 400
         if thinking_level not in THINKING_LEVEL_CHOICES:
             return "Unsupported Pi thinking level", 400
-        supervisor().start_loop(loop_id, bridge_host=bridge_host, pi_model=pi_model, thinking_level=thinking_level)
+        supervisor().start_loop(loop_id, bridge_host=bridge_host, fc_connection=fc_connection, usb_device=usb_device, pi_model=pi_model, thinking_level=thinking_level)
         return _redirect_after_form("loop_detail", loop_id=loop_id)
 
     @app.post("/loops/<int:loop_id>/tuning-agent/continue")
@@ -483,14 +495,18 @@ def create_app(db_path: str | Path) -> Flask:
         loop = conn.execute("SELECT id FROM loops WHERE id = ?", (loop_id,)).fetchone()
         if not loop:
             return "Loop not found", 404
+        fc_connection = request.form.get("fc_connection", "").strip() or app.config["TUNE_DEFAULT_FC_CONNECTION"]
         bridge_host = request.form.get("bridge_host", "").strip() or app.config["TUNE_DEFAULT_BRIDGE_HOST"]
+        usb_device = request.form.get("usb_device", "").strip() or app.config["TUNE_DEFAULT_USB_DEVICE"]
         pi_model = request.form.get("pi_model", "").strip() or app.config["TUNE_DEFAULT_PI_MODEL"]
         thinking_level = request.form.get("thinking_level", "").strip() or app.config["TUNE_DEFAULT_THINKING_LEVEL"]
+        if fc_connection not in {"bridge", "usb"}:
+            return "Unsupported FC connection", 400
         if pi_model not in PI_MODEL_CHOICES:
             return "Unsupported Pi model", 400
         if thinking_level not in THINKING_LEVEL_CHOICES:
             return "Unsupported Pi thinking level", 400
-        supervisor().continue_loop(loop_id, bridge_host=bridge_host, pi_model=pi_model, thinking_level=thinking_level)
+        supervisor().continue_loop(loop_id, bridge_host=bridge_host, fc_connection=fc_connection, usb_device=usb_device, pi_model=pi_model, thinking_level=thinking_level)
         return _redirect_after_form("loop_detail", loop_id=loop_id)
 
     @app.post("/loops/<int:loop_id>/tuning-agent/abort")

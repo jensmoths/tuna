@@ -37,6 +37,8 @@ def _migrate_tuning_agent_sessions(conn: sqlite3.Connection) -> None:
           pi_session_file TEXT,
           status TEXT NOT NULL DEFAULT 'Idle',
           bridge_host TEXT NOT NULL DEFAULT '',
+          fc_connection TEXT NOT NULL DEFAULT 'bridge',
+          usb_device TEXT NOT NULL DEFAULT '',
           pi_model TEXT NOT NULL DEFAULT '',
           thinking_level TEXT NOT NULL DEFAULT '',
           process_id INTEGER,
@@ -49,6 +51,10 @@ def _migrate_tuning_agent_sessions(conn: sqlite3.Connection) -> None:
         """
     )
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(tuning_agent_sessions)")}
+    if "fc_connection" not in columns:
+        conn.execute("ALTER TABLE tuning_agent_sessions ADD COLUMN fc_connection TEXT NOT NULL DEFAULT 'bridge'")
+    if "usb_device" not in columns:
+        conn.execute("ALTER TABLE tuning_agent_sessions ADD COLUMN usb_device TEXT NOT NULL DEFAULT ''")
     if "pi_model" not in columns:
         conn.execute("ALTER TABLE tuning_agent_sessions ADD COLUMN pi_model TEXT NOT NULL DEFAULT ''")
     if "thinking_level" not in columns:

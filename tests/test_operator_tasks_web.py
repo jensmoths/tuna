@@ -215,6 +215,35 @@ class OperatorWebTests(unittest.TestCase):
         self.assertNotIn(b"Supervisor trace", page.data)
         self.assertNotIn(b"sent initial prompt to Pi RPC", page.data)
 
+    def test_starting_agent_can_select_direct_usb_connection(self):
+        build_id = create_build(self.conn, "5 inch")
+        loop_id = create_loop(self.conn, build_id, "baseline")
+
+        class RecordingSupervisor:
+            def __init__(self):
+                self.started = None
+            def is_loop_running(self, requested_loop_id):
+                return False
+            def start_loop(self, requested_loop_id, **kwargs):
+                self.started = (requested_loop_id, kwargs)
+
+        app = create_app(self.db_path)
+        supervisor = RecordingSupervisor()
+        app.extensions["tuna_pi_supervisor"] = supervisor
+        client = app.test_client()
+        page = client.get(f"/loops/{loop_id}/workbench")
+        self.assertIn(b"Direct USB on this Host Computer", page.data)
+
+        response = client.post(
+            f"/loops/{loop_id}/tuning-agent/start",
+            data={"fc_connection": "usb", "usb_device": "/dev/ttyACM0", "bridge_host": "ignored", "pi_model": "gpt-5.4-mini", "thinking_level": "medium"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(supervisor.started[0], loop_id)
+        self.assertEqual(supervisor.started[1]["fc_connection"], "usb")
+        self.assertEqual(supervisor.started[1]["usb_device"], "/dev/ttyACM0")
+
     def test_workbench_running_agent_uses_working_status_and_secondary_controls(self):
         build_id = create_build(self.conn, "5 inch")
         loop_id = create_loop(self.conn, build_id, "baseline")

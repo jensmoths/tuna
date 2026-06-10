@@ -23,11 +23,19 @@ class FcsCliTests(unittest.TestCase):
     def test_inspect_defaults_bridge_host_from_environment_variable(self):
         payload = {"bridge_host": "env-bridge"}
         with patch.dict(os.environ, {"FCS_BRIDGE_HOST": "env-bridge"}, clear=False):
-            with patch("fcs_cli._inspect", return_value=payload) as inspect:
+            with patch("fcs_cli._inspect_bridge", return_value=payload) as inspect:
                 code, result = self.run_cli_json_with_code("inspect")
         self.assertEqual(code, 0)
         self.assertEqual(result, payload)
         inspect.assert_called_once_with("env-bridge", port=5761, timeout_seconds=2.5)
+
+    def test_inspect_usb_delegates_to_usb_transport(self):
+        payload = {"connection": "usb", "usb_device": "/dev/ttyACM0"}
+        with patch("fcs_cli._inspect_usb", return_value=payload) as inspect:
+            code, result = self.run_cli_json_with_code("inspect", "--connection", "usb", "--usb-device", "/dev/ttyACM0")
+        self.assertEqual(code, 0)
+        self.assertEqual(result, payload)
+        inspect.assert_called_once_with("/dev/ttyACM0", timeout_seconds=2.5)
 
     def test_blackbox_transfer_delegates_to_fcs_download(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -59,6 +67,27 @@ class FcsCliTests(unittest.TestCase):
             max_attempts=3,
             progress=None,
         )
+
+    def test_blackbox_transfer_usb_delegates_to_usb_download(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "flight.bbl"
+            payload = {"connection": "usb", "download": {"output_path": str(output)}}
+            with patch("fcs_cli.transfer_blackbox_log_from_usb", return_value=payload) as transfer:
+                code, result = self.run_cli_json_with_code(
+                    "blackbox",
+                    "transfer",
+                    "--connection",
+                    "usb",
+                    "--usb-device",
+                    "/dev/ttyACM0",
+                    "--output",
+                    str(output),
+                    "--timeout",
+                    "12",
+                )
+        self.assertEqual(code, 0)
+        self.assertEqual(result, payload)
+        transfer.assert_called_once_with("/dev/ttyACM0", output_path=output, trigger_msc=True, timeout_seconds=12.0)
 
     def test_blackbox_transfer_json_error_is_structured(self):
         with tempfile.TemporaryDirectory() as tmp:

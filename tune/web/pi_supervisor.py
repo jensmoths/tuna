@@ -48,6 +48,8 @@ class PiRpcSupervisor:
         loop_id: int,
         *,
         bridge_host: str = "",
+        fc_connection: str = "bridge",
+        usb_device: str = "",
         pi_model: str = "gpt-5.4-mini",
         thinking_level: str = "medium",
         prompt_message: str | None = None,
@@ -56,6 +58,8 @@ class PiRpcSupervisor:
             raise ValueError(f"Unsupported Pi model: {pi_model}")
         if thinking_level not in THINKING_LEVEL_CHOICES:
             raise ValueError(f"Unsupported Pi thinking level: {thinking_level}")
+        if fc_connection not in {"bridge", "usb"}:
+            raise ValueError(f"Unsupported FC connection: {fc_connection}")
         loop = self._load_loop(loop_id)
         session = self.get_session(loop_id)
         args = [
@@ -78,6 +82,8 @@ class PiRpcSupervisor:
             loop_id,
             status="Starting Tuning Agent",
             bridge_host=bridge_host,
+            fc_connection=fc_connection,
+            usb_device=usb_device,
             pi_model=pi_model,
             thinking_level=thinking_level,
             process_id=None,
@@ -91,7 +97,7 @@ class PiRpcSupervisor:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                env=self._process_env(bridge_host),
+                env=self._process_env(bridge_host, fc_connection=fc_connection, usb_device=usb_device),
                 text=True,
                 bufsize=1,
             )
@@ -110,27 +116,33 @@ class PiRpcSupervisor:
             threading.Thread(target=self._read_stderr, args=(loop_id, process.stderr), daemon=True).start()
 
         self._send(process, {"type": "get_state"}, loop_id=loop_id)
-        self._send(process, {"type": "prompt", "message": prompt_message or self._initial_prompt(loop, bridge_host)}, loop_id=loop_id)
+        self._send(process, {"type": "prompt", "message": prompt_message or self._initial_prompt(loop, bridge_host, fc_connection=fc_connection, usb_device=usb_device)}, loop_id=loop_id)
 
     def continue_loop(
         self,
         loop_id: int,
         *,
         bridge_host: str = "",
+        fc_connection: str = "bridge",
+        usb_device: str = "",
         pi_model: str | None = None,
         thinking_level: str | None = None,
     ) -> None:
         session = self.get_session(loop_id) or {}
+        selected_connection = fc_connection or session.get("fc_connection", "bridge") or "bridge"
         selected_bridge_host = bridge_host or session.get("bridge_host", "")
+        selected_usb_device = usb_device or session.get("usb_device", "")
         selected_model = pi_model or session.get("pi_model") or "gpt-5.4-mini"
         selected_thinking = thinking_level or session.get("thinking_level") or "medium"
         self._append_debug_trace(loop_id, "continuing Pi RPC Tuning Agent session after interruption")
         self.start_loop(
             loop_id,
             bridge_host=selected_bridge_host,
+            fc_connection=selected_connection,
+            usb_device=selected_usb_device,
             pi_model=selected_model,
             thinking_level=selected_thinking,
-            prompt_message=self._continue_prompt(self._load_loop(loop_id), selected_bridge_host),
+            prompt_message=self._continue_prompt(self._load_loop(loop_id), selected_bridge_host, fc_connection=selected_connection, usb_device=selected_usb_device),
         )
 
     def abort_loop(self, loop_id: int) -> None:
@@ -174,6 +186,8 @@ class PiRpcSupervisor:
                 self.start_loop(
                     loop_id,
                     bridge_host=session.get("bridge_host", ""),
+                    fc_connection=session.get("fc_connection", "bridge") or "bridge",
+                    usb_device=session.get("usb_device", ""),
                     pi_model=session.get("pi_model") or "gpt-5.4-mini",
                     thinking_level=session.get("thinking_level") or "medium",
                 )
@@ -282,6 +296,8 @@ class PiRpcSupervisor:
         *,
         status: str | object = _UNSET,
         bridge_host: str | object = _UNSET,
+        fc_connection: str | object = _UNSET,
+        usb_device: str | object = _UNSET,
         process_id: int | None | object = _UNSET,
         last_error: str | None | object = _UNSET,
         pi_session_id: str | object = _UNSET,
@@ -303,6 +319,8 @@ class PiRpcSupervisor:
         for column, value in (
             ("status", status),
             ("bridge_host", bridge_host),
+            ("fc_connection", fc_connection),
+            ("usb_device", usb_device),
             ("process_id", process_id),
             ("last_error", last_error),
             ("pi_session_id", pi_session_id),
@@ -383,11 +401,14 @@ class PiRpcSupervisor:
             else:
                 self._append_debug_trace(loop_id, f"sent Pi RPC command: {command.get('type')}")
 
-    def _process_env(self, bridge_host: str) -> dict[str, str]:
+    def _process_env(self, bridge_host: str, *, fc_connection: str, usb_device: str) -> dict[str, str]:
         env = os.environ.copy()
         env["TUNA_DB"] = str(self.db_path)
+        env["FCS_CONNECTION"] = fc_connection
         if bridge_host:
             env["FCS_BRIDGE_HOST"] = bridge_host
+        if usb_device:
+            env["FCS_USB_DEVICE"] = usb_device
         return env
 
     def _read_stdout(self, loop_id: int, stdout: TextIO) -> None:
@@ -511,14 +532,12 @@ class PiRpcSupervisor:
                 parts.append(item["text"].strip())
         return "\n".join(part for part in parts if part)
 
-    def _initial_prompt(self, loop: dict[str, Any], bridge_host: str) -> str:
+    def _initial_prompt(self, loop: dict[str, Any], bridge_host: str, *, fc_connection: str, usb_device: str) -> str:
         bridge_line = bridge_host or "not provided"
+        usb_line = usb_device or "auto-detect"
+        connection_command = "PYTHONPATH=fcs-host python3 fcs-host/fcs.py inspect --connection usb --json" if fc_connection == "usb" else "PYTHONPATH=fcs-host python3 fcs-host/fcs.py inspect --connection bridge --json"
         skill_text = self._tuning_agent_skill_text()
-        fcs_step = (
-            f"2. If an FCS Bridge host is provided, query the connected FC with `PYTHONPATH=fcs-host python3 fcs-host/fcs.py inspect --json` and compare that snapshot with the Loop Build snapshot."
-            if bridge_host
-            else "2. No FCS Bridge host was provided; skip connected-FC inspection unless one appears in Tuna state."
-        )
+        fcs_step = f"2. Query the connected FC with `{connection_command}` and compare that snapshot with the Loop Build snapshot."
         return f"""Act as the Tuna Tuning Agent for this Loop. Use the injected operating instructions below; do not load skills, context files, source files, or repository documentation during normal Loop operation.
 
 Injected Tuna Tuning Agent operating instructions:
@@ -532,7 +551,9 @@ Database: {self.db_path}
 Loop: {loop['id']}
 Build: {loop['build_id']} ({loop['build_name']})
 Tune Goal: {loop['tune_goal']}
+FCS connection: {fc_connection}
 FCS Bridge host: {bridge_line}
+USB FC device: {usb_line}
 
 First:
 1. Inspect compact Tuna state with `python3 -m tune loop status --loop-id {loop['id']} --json`.
@@ -548,8 +569,9 @@ Use FCS, not raw Bridge protocol access, for flight-controller operations.
 Use CLI help or Tuna commands if syntax is unclear; do not read source code or repository docs during normal Loop operation.
 """
 
-    def _continue_prompt(self, loop: dict[str, Any], bridge_host: str) -> str:
+    def _continue_prompt(self, loop: dict[str, Any], bridge_host: str, *, fc_connection: str, usb_device: str) -> str:
         bridge_line = bridge_host or "not provided"
+        usb_line = usb_device or "auto-detect"
         skill_text = self._tuning_agent_skill_text()
         return f"""Continue acting as the Tuna Tuning Agent for this existing Loop after an interruption or abort. Use the injected operating instructions below; do not load skills, context files, source files, or repository documentation during normal Loop operation.
 
@@ -562,7 +584,9 @@ Database: {self.db_path}
 Loop: {loop['id']}
 Build: {loop['build_id']} ({loop['build_name']})
 Tune Goal: {loop['tune_goal']}
+FCS connection: {fc_connection}
 FCS Bridge host: {bridge_line}
+USB FC device: {usb_line}
 
 First:
 1. Inspect compact Tuna state with `python3 -m tune loop status --loop-id {loop['id']} --json`.

@@ -7,6 +7,7 @@
 {% set can_resume_agent = agent_session and ('idle' in agent_status_lower or 'aborted' in agent_status_lower or not state.agent_process_running) %}
 {% set primary_agent_label = 'Continue Tuning Agent' if can_resume_agent else 'Start Tuning Agent' %}
 {% set show_abort_agent = state.agent_process_running and 'idle' not in agent_status_lower %}
+{% set selected_connection = agent_session.fc_connection if agent_session and agent_session.fc_connection else default_fc_connection %}
 <div class="agent-banner {% if agent_error %}agent-banner-error{% elif agent_working %}agent-banner-working{% endif %}">
   <div class="agent-banner-main">
     <span class="agent-indicator{% if agent_working %} agent-indicator-working{% endif %}" aria-hidden="true"></span>
@@ -33,6 +34,7 @@
         <dt>Build</dt><dd>#{{ state.loop.build_id }} {{ state.loop.build_name }}</dd>
         <dt>Tune Goal</dt><dd>{{ state.loop.tune_goal }}</dd>
         <dt>Tuning Agent</dt><dd>{{ agent_status }}</dd>
+        <dt>FC connection</dt><dd>{{ selected_connection }}</dd>
         <dt>Open tasks</dt><dd>{{ state.open_task_count }}</dd>
         <dt>Open notifications</dt><dd>{{ state.open_notification_count }}</dd>
       </dl>
@@ -65,7 +67,9 @@
         <p><strong>Next action:</strong> {{ primary_agent_label }} when ready.</p>
         <form class="agent-primary-action workbench-primary-action" method="post" action="/loops/{{ loop_id }}/tuning-agent/start">
           <input type="hidden" name="next" value="/loops/{{ loop_id }}/workbench">
+          <input type="hidden" name="fc_connection" value="{{ selected_connection }}">
           <input type="hidden" name="bridge_host" value="{{ agent_session.bridge_host if agent_session and agent_session.bridge_host else default_bridge_host }}">
+          <input type="hidden" name="usb_device" value="{{ agent_session.usb_device if agent_session and agent_session.usb_device else default_usb_device }}">
           <input type="hidden" name="pi_model" value="{{ agent_session.pi_model if agent_session and agent_session.pi_model else default_pi_model }}">
           <input type="hidden" name="thinking_level" value="{{ agent_session.thinking_level if agent_session and agent_session.thinking_level else default_thinking_level }}">
           {% if can_resume_agent %}
@@ -121,7 +125,14 @@
         <summary>Connection and model settings</summary>
         <form method="post" action="/loops/{{ loop_id }}/tuning-agent/start">
           <input type="hidden" name="next" value="/loops/{{ loop_id }}/workbench">
+          <label>FC connection
+            <select name="fc_connection">
+              <option value="bridge"{% if selected_connection == 'bridge' %} selected{% endif %}>FC Bridge</option>
+              <option value="usb"{% if selected_connection == 'usb' %} selected{% endif %}>Direct USB on this Host Computer</option>
+            </select>
+          </label>
           <label>FCS Bridge host <input name="bridge_host" value="{{ agent_session.bridge_host if agent_session and agent_session.bridge_host else default_bridge_host }}"></label>
+          <label>USB FC device <input name="usb_device" placeholder="auto-detect" value="{{ agent_session.usb_device if agent_session and agent_session.usb_device else default_usb_device }}"></label>
           <label>Pi model
             <select name="pi_model">
               {% set selected_model = agent_session.pi_model if agent_session and agent_session.pi_model else default_pi_model %}

@@ -106,6 +106,8 @@ CREATE TABLE IF NOT EXISTS tuning_agent_sessions (
   pi_session_file TEXT,
   status TEXT NOT NULL DEFAULT 'Idle',
   bridge_host TEXT NOT NULL DEFAULT '',
+  fc_connection TEXT NOT NULL DEFAULT 'bridge',
+  usb_device TEXT NOT NULL DEFAULT '',
   pi_model TEXT NOT NULL DEFAULT '',
   thinking_level TEXT NOT NULL DEFAULT '',
   process_id INTEGER,

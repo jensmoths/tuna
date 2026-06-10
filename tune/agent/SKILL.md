@@ -49,6 +49,7 @@ Use this checklist before broader discovery:
    Use full `loop context` only when the compact status is insufficient.
 2. If hardware is connected, inspect it through Tuna/FCS:
    `PYTHONPATH=fcs-host python3 fcs-host/fcs.py inspect --json`
+   Use `--connection usb` when the FC is connected directly to USB on the **Host Computer**.
 3. Read individual **Operator Task** responses with:
    `python3 -m tune task show --task-id <id> --json`
    Avoid broad resolved task lists unless you do not know the task id.
@@ -129,12 +130,19 @@ python3 -m tune loop list --build-id 1 --json
 
 ### 3. Transfer Blackbox Logs through FCS
 
-Use FCS tools for **Post-flight Transfer** from FC/Bridge to the **Host Computer**. Do not use raw Bridge/protocol access unless specifically debugging FCS/Bridge behavior.
+Use FCS tools for **Post-flight Transfer** from the FC to the **Host Computer** over the selected FCS connection. Do not use raw Bridge/protocol access unless specifically debugging FCS/Bridge behavior.
 
 Preferred v1 workflow for ESP32-S3 USB-host **Bridge** MSC transfer: use `fcs blackbox transfer`. The FCS CLI performs Bridge/FC mode validation, triggers MSC mode when needed, prefers the actual mounted Betaflight `.bbl` file when available, falls back to raw MSC download with resume sidecars, trims leading padding before the Blackbox header for raw fallback, and validates that the resulting file starts with `H Product:Blackbox`. Then use `tune log import` to record the retained Host Computer artifact in Tuna state.
 
 ```bash
 PYTHONPATH=fcs-host python3 fcs-host/fcs.py blackbox transfer \
+  --timeout 60 \
+  --output transferred-logs/current-flight.bbl \
+  --json
+
+# Direct USB FC connection on the Host Computer:
+PYTHONPATH=fcs-host python3 fcs-host/fcs.py blackbox transfer \
+  --connection usb \
   --timeout 60 \
   --output transferred-logs/current-flight.bbl \
   --json
@@ -157,6 +165,8 @@ After transfer validation and host-side retention/import succeed, erase the tran
 PYTHONPATH=fcs-host python3 fcs-host/fcs.py blackbox erase \
   --confirm erase-transferred-blackbox-log \
   --json
+
+# Add `--connection usb` when using direct USB.
 ```
 
 Treat erase failure as a follow-up operational issue, not as a reason to discard the retained **Blackbox Log** on the **Host Computer**.
@@ -254,6 +264,8 @@ PYTHONPATH=fcs-host python3 fcs-host/fcs.py cli write \
   --cli-file approved-tune-update.cli \
   --confirm write-fc-cli \
   --json
+
+# Add `--connection usb` when using direct USB.
 ```
 
 The confirmation string is intentionally explicit. Use this only for Operator-approved **Tune Updates** after verifying FC identity and current state.

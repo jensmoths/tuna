@@ -28,7 +28,9 @@ See `docs/domain-model.md` for canonical Tuna vocabulary and domain rules.
 Common CLI environment variables:
 
 - `TUNA_DB`: default SQLite Tuna database path for `python3 -m tune` when `--db` is omitted.
+- `FCS_CONNECTION`: default FCS connection type (`bridge` or `usb`) for `fcs` hardware commands when `--connection` is omitted.
 - `FCS_BRIDGE_HOST`: default FCS Bridge host for `fcs` hardware commands and Tune Operator Task defaults when `--bridge-host` is omitted.
+- `FCS_USB_DEVICE`: default direct USB serial device for `fcs` hardware commands when `--usb-device` is omitted; if unset, FCS attempts auto-detection.
 - `TUNA_LOG_STORAGE_DIR`: default managed Host Computer storage directory for `tune log import`.
 - `TUNA_DECODED_LOG_DIR`: default decoded CSV output directory for `tune analysis decode` and `tune analysis decode-analyze`.
 - `TUNA_BLACKBOX_DECODER`: default Blackbox decoder command for `tune analysis decode` and `tune analysis decode-analyze`.
@@ -105,7 +107,7 @@ Explicit CLI flags override environment defaults. The Operator Console superviso
 ## Blackbox Log transfer and Import
 
 - **Post-flight Transfer** means moving completed **Blackbox Logs** from FC/Bridge storage to the **Host Computer** using FCS.
-- The Tuning Agent-facing command for v1 **Post-flight Transfer** is `PYTHONPATH=fcs-host python3 fcs-host/fcs.py blackbox transfer --bridge-host ... --output ... --json`; afterward the Tuning Agent records the retained Host Computer artifact with `python3 -m tune --db ... log import ... --json`.
+- The Tuning Agent-facing command for v1 **Post-flight Transfer** is `PYTHONPATH=fcs-host python3 fcs-host/fcs.py blackbox transfer --connection bridge --bridge-host ... --output ... --json` for the **Bridge**, or `--connection usb --usb-device ...` for a direct USB FC on the **Host Computer**; afterward the Tuning Agent records the retained Host Computer artifact with `python3 -m tune --db ... log import ... --json`.
 - `fcs blackbox transfer` owns Bridge/FC mode validation, optional Betaflight `msc` triggering, waiting for MSC readiness, preferring the actual mounted Betaflight `.bbl` file when available, falling back to raw MSC download with resume sidecars, trimming leading padding before the Blackbox header for raw fallback, and validating that the output starts with `H Product:Blackbox`.
 - When starting from USB CDC/MSP mode, `fcs blackbox transfer` discovers the FC-reported Blackbox storage `used_size` before triggering MSC mode. `--size` remains an override/debug option for cases such as resuming while the Bridge is already in MSC raw mode and MSP storage discovery is unavailable.
 - After successful raw MSC transfer, the **Operator** must reset/power-cycle the FC back to USB CDC/MSP mode before further FC operations; current v1 cannot reliably return from MSC to CDC through FCS alone.
