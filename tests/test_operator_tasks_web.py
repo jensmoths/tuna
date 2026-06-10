@@ -15,7 +15,7 @@ from tune.services.diagnoses import record_diagnosis
 from tune.services.iterations import complete_no_change, create_iteration
 from tune.services.loops import create_loop
 from tune.services.operator_notifications import create_blackbox_config_notification
-from tune.services.operator_tasks import create_build_confirmation_task, create_flight_capture_task, create_task, create_tune_goal_task
+from tune.services.operator_tasks import create_build_confirmation_task, create_flight_capture_task, create_task, create_tune_goal_task, resolve_task
 from tune.services.tune_updates import propose_tune_update
 from tune.storage import connect, init_db
 from tune.services.analysis import analyze_imported_log
@@ -168,7 +168,7 @@ class OperatorWebTests(unittest.TestCase):
         cursor = json.loads(session["resume_cursor_json"])
         self.assertEqual(cursor["last_resolved_operator_task"]["id"], task_id)
 
-    def test_chat_prototype_shows_tasks_and_agent_status_without_trace_log(self):
+    def test_workbench_shows_tasks_and_agent_status_without_trace_log(self):
         build_id = create_build(self.conn, "5 inch")
         loop_id = create_loop(self.conn, build_id, "baseline")
         create_task(
@@ -178,28 +178,71 @@ class OperatorWebTests(unittest.TestCase):
             body="Connect the FCS Bridge so the Tuning Agent can inspect the FC.",
             payload={"loop_id": loop_id},
         )
+        resolved_task_id = create_task(
+            self.conn,
+            "request_fcs_connection",
+            "Restore FCS connection",
+            body="Restore the FCS Bridge connection.",
+            payload={"loop_id": loop_id},
+        )
+        resolve_task(self.conn, resolved_task_id, {"decision": "completed", "notes": ""})
         self.conn.execute(
             """
             INSERT INTO tuning_agent_sessions (loop_id, status, debug_trace)
             VALUES (?, ?, ?)
+            ON CONFLICT(loop_id) DO UPDATE SET status = excluded.status, debug_trace = excluded.debug_trace
             """,
             (loop_id, "Inspecting Tuna state", "[2026-06-07T00:00:00Z] sent initial prompt to Pi RPC"),
         )
         self.conn.commit()
 
         client = create_app(self.db_path).test_client()
-        page = client.get(f"/loops/{loop_id}/chat")
+        page = client.get(f"/loops/{loop_id}/workbench")
+        legacy_page = client.get(f"/loops/{loop_id}/chat")
 
         self.assertEqual(page.status_code, 200)
+        self.assertEqual(legacy_page.status_code, 302)
+        self.assertEqual(legacy_page.headers["Location"], f"/loops/{loop_id}/workbench")
+        self.assertIn(b'href="/workbench"', page.data)
+        self.assertIn(b"Workbench Activity", page.data)
         self.assertIn(b"<dt>Loop</dt><dd>#", page.data)
         self.assertIn(b"Loop workbench", client.get("/").data)
         self.assertIn(b"Inspecting Tuna state", page.data)
         self.assertIn(b"Connect FCS", page.data)
+        self.assertIn(b"Operator completed task. Notes: none.", page.data)
+        self.assertNotIn(b"Operator responded: {", page.data)
         self.assertIn(b"Operator response", page.data)
         self.assertNotIn(b"Supervisor trace", page.data)
         self.assertNotIn(b"sent initial prompt to Pi RPC", page.data)
 
-    def test_loop_events_streams_chat_state(self):
+    def test_workbench_running_agent_uses_working_status_and_secondary_controls(self):
+        build_id = create_build(self.conn, "5 inch")
+        loop_id = create_loop(self.conn, build_id, "baseline")
+        self.conn.execute(
+            """
+            INSERT INTO tuning_agent_sessions (loop_id, status)
+            VALUES (?, ?)
+            """,
+            (loop_id, "Inspecting Tuna state"),
+        )
+        self.conn.commit()
+
+        class RunningSupervisor:
+            def is_loop_running(self, requested_loop_id):
+                return requested_loop_id == loop_id
+
+        app = create_app(self.db_path)
+        app.extensions["tuna_pi_supervisor"] = RunningSupervisor()
+        page = app.test_client().get(f"/loops/{loop_id}/workbench")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Tuning Agent is working", page.data)
+        self.assertIn(b"Agent controls", page.data)
+        self.assertIn(b"Connection and model settings", page.data)
+        self.assertIn(b"Abort Tuning Agent", page.data)
+        self.assertNotIn(b"Start or resume", page.data)
+
+    def test_loop_events_streams_workbench_state(self):
         build_id = create_build(self.conn, "5 inch")
         loop_id = create_loop(self.conn, build_id, "baseline")
         create_task(self.conn, "request_fcs_connection", "Connect FCS", payload={"loop_id": loop_id})
@@ -214,7 +257,7 @@ class OperatorWebTests(unittest.TestCase):
         self.assertIn(b"html", response.data)
         self.assertIn(b"Connect FCS", response.data)
 
-    def test_chat_task_response_redirects_back_to_chat(self):
+    def test_workbench_task_response_redirects_back_to_workbench(self):
         build_id = create_build(self.conn, "5 inch")
         loop_id = create_loop(self.conn, build_id, "baseline")
         task_id = create_task(self.conn, "request_fcs_connection", "Connect FCS", payload={"loop_id": loop_id})
@@ -222,13 +265,13 @@ class OperatorWebTests(unittest.TestCase):
 
         response = client.post(
             f"/tasks/{task_id}/resolve-generic",
-            data={"decision": "completed", "notes": "Connected", "next": f"/loops/{loop_id}/chat"},
+            data={"decision": "completed", "notes": "Connected", "next": f"/loops/{loop_id}/workbench"},
         )
 
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.headers["Location"], f"/loops/{loop_id}/chat")
+        self.assertEqual(response.headers["Location"], f"/loops/{loop_id}/workbench")
 
-    def test_chat_shows_loop_selector_and_confirm_build_response(self):
+    def test_workbench_shows_loop_selector_and_confirm_build_response(self):
         build_id = create_build(self.conn, "5 inch")
         loop_id = create_loop(self.conn, build_id, "baseline")
         create_loop(self.conn, build_id, "follow-up")
@@ -241,7 +284,7 @@ class OperatorWebTests(unittest.TestCase):
         )
         client = create_app(self.db_path).test_client()
 
-        page = client.get(f"/loops/{loop_id}/chat")
+        page = client.get(f"/loops/{loop_id}/workbench")
 
         self.assertEqual(page.status_code, 200)
         self.assertIn(b">Switch</button>", page.data)

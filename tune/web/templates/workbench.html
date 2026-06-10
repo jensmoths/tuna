@@ -1,18 +1,21 @@
 {% extends "layout.html" %}{% block body %}
-<div class="chat-page">
+<div class="workbench-page">
 {% if not state %}
   <h1>Loop workbench</h1>
-  <div class="chat-header">
+  <div class="workbench-header">
     <p>No Loop exists yet.</p>
     {% if builds %}<p><a href="/loops">Start a Loop</a> to use the Loop workbench.</p>{% else %}<p><a href="/builds">Create or confirm a Build</a> before starting a Loop.</p>{% endif %}
   </div>
 {% else %}
   {% set loop = state.loop %}
   <div class="workbench-top">
-    <h1>Loop workbench</h1>
+    <div>
+      <h1>Loop workbench</h1>
+      <p class="workbench-subtitle">Monitor Loop state, resolve Operator Tasks, and continue the Tuning Agent.</p>
+    </div>
     <div class="workbench-top-controls">
       {% if state.loops|length > 1 %}
-      <form class="loop-switcher" method="get" action="/chat" onsubmit="if(this.loop_id.value){ window.location='/loops/'+this.loop_id.value+'/chat'; } return false;">
+      <form class="loop-switcher" method="get" action="/workbench" onsubmit="if(this.loop_id.value){ window.location='/loops/'+this.loop_id.value+'/workbench'; } return false;">
         <label>Loop
           <select name="loop_id">
             {% for item in state.loops %}<option value="{{ item.id }}"{% if item.id == loop.id %} selected{% endif %}>#{{ item.id }} {{ item.status }} — {{ item.build_name }} — {{ item.tune_goal }}</option>{% endfor %}
@@ -25,7 +28,7 @@
   </div>
 
   <div id="workbench">
-    {% include "_chat_workbench.html" %}
+    {% include "_workbench.html" %}
   </div>
 
   <script>

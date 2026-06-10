@@ -93,7 +93,30 @@ def _task_loop_id(conn, task: dict) -> int | None:
     return int(row["loop_id"]) if row else None
 
 
-def _chat_state(conn, loop_id: int, agent_process_running: bool = False) -> dict:
+def _humanize_token(value: object) -> str:
+    return str(value or "").replace("_", " ").strip()
+
+
+def _operator_task_activity_body(task: dict) -> str:
+    if task["status"] != "resolved" or not task.get("response_json"):
+        return task["body"]
+    try:
+        response = json.loads(task["response_json"])
+    except json.JSONDecodeError:
+        return "Operator responded."
+    if not isinstance(response, dict):
+        return "Operator responded."
+    decision = _humanize_token(response.get("decision")) or "responded"
+    notes = str(response.get("notes") or "").strip()
+    text = f"Operator {decision} task."
+    if notes:
+        text += f" Notes: {notes}"
+    else:
+        text += " Notes: none."
+    return text
+
+
+def _workbench_state(conn, loop_id: int, agent_process_running: bool = False) -> dict:
     loop = _dict(
         conn.execute(
             """
@@ -134,34 +157,39 @@ def _chat_state(conn, loop_id: int, agent_process_running: bool = False) -> dict
         events.append(
             {
                 "kind": "agent_status",
+                "type_label": "Tuning Agent",
                 "title": "Tuning Agent status",
                 "body": f"Tuning Agent is {agent_session['status']}.",
                 "created_at": agent_session["updated_at"],
+                "status_label": agent_session["status"],
             }
         )
     for task in tasks:
-        body = task["body"]
-        if task["status"] == "resolved" and task.get("response_json"):
-            body = f"Operator responded: {task['response_json']}"
         events.append(
             {
                 "kind": "operator_task",
-                "title": f"Operator Task #{task['id']}: {task['title']}",
-                "body": body,
+                "type_label": "Operator Task",
+                "title": f"#{task['id']} {task['title']}",
+                "body": _operator_task_activity_body(task),
                 "created_at": task["resolved_at"] or task["created_at"],
                 "status": task["status"],
+                "status_label": _humanize_token(task["status"]),
                 "task_id": task["id"],
+                "href": f"/tasks/{task['id']}",
             }
         )
     for notification in notifications:
         events.append(
             {
                 "kind": "operator_notification",
-                "title": f"Operator Notification #{notification['id']}: {notification['title']}",
+                "type_label": "Operator Notification",
+                "title": f"#{notification['id']} {notification['title']}",
                 "body": notification["body"],
                 "created_at": notification["acknowledged_at"] or notification["created_at"],
                 "status": notification["status"],
+                "status_label": _humanize_token(notification["status"]),
                 "notification_id": notification["id"],
+                "href": f"/notifications/{notification['id']}",
             }
         )
     events.sort(key=lambda event: (event.get("created_at") or "", event.get("title") or ""))
@@ -177,6 +205,8 @@ def _chat_state(conn, loop_id: int, agent_process_running: bool = False) -> dict
         "notifications": notifications,
         "current_task": open_tasks[0] if open_tasks else None,
         "open_notifications": open_notifications,
+        "open_task_count": len(open_tasks),
+        "open_notification_count": len(open_notifications),
         "events": events,
     }
 
@@ -355,7 +385,11 @@ def create_app(db_path: str | Path) -> Flask:
         )
 
     @app.get("/chat")
-    def chat_index():
+    def workbench_index_alias():
+        return redirect("/workbench")
+
+    @app.get("/workbench")
+    def workbench_index():
         conn = db()
         loop = conn.execute(
             """
@@ -365,18 +399,22 @@ def create_app(db_path: str | Path) -> Flask:
             """
         ).fetchone()
         if loop:
-            return redirect(url_for("loop_chat", loop_id=loop["id"]))
+            return redirect(f"/loops/{loop['id']}/workbench")
         builds = conn.execute("SELECT * FROM builds ORDER BY name, id").fetchall()
-        return render_template("chat.html", state=None, builds=builds)
+        return render_template("workbench.html", state=None, builds=builds)
 
     @app.get("/loops/<int:loop_id>/chat")
-    def loop_chat(loop_id: int):
+    def loop_workbench_alias(loop_id: int):
+        return redirect(f"/loops/{loop_id}/workbench")
+
+    @app.get("/loops/<int:loop_id>/workbench")
+    def loop_workbench(loop_id: int):
         conn = db()
-        state = _chat_state(conn, loop_id, agent_process_running=supervisor().is_loop_running(loop_id))
+        state = _workbench_state(conn, loop_id, agent_process_running=supervisor().is_loop_running(loop_id))
         if not state:
             return "Loop not found", 404
         return render_template(
-            "chat.html",
+            "workbench.html",
             state=state,
             builds=[],
             default_bridge_host=app.config["TUNE_DEFAULT_BRIDGE_HOST"],
@@ -395,12 +433,12 @@ def create_app(db_path: str | Path) -> Flask:
             last_payload = ""
             while True:
                 conn = db()
-                state = _chat_state(conn, loop_id, agent_process_running=supervisor().is_loop_running(loop_id))
+                state = _workbench_state(conn, loop_id, agent_process_running=supervisor().is_loop_running(loop_id))
                 payload = json.dumps(
                     {
                         "agent_status": state.get("agent_session", {}).get("status") if state.get("agent_session") else "not started",
                         "html": render_template(
-                            "_chat_workbench.html",
+                            "_workbench.html",
                             state=state,
                             loop=state.get("loop"),
                             default_bridge_host=app.config["TUNE_DEFAULT_BRIDGE_HOST"],

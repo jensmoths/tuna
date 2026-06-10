@@ -1,0 +1,161 @@
+{% set loop_id = state.loop.id %}
+{% set agent_session = state.agent_session %}
+{% set agent_status = agent_session.status if agent_session else 'not started' %}
+{% set agent_status_lower = agent_status | lower %}
+{% set agent_working = state.agent_process_running and 'idle' not in agent_status_lower and 'waiting' not in agent_status_lower and 'aborted' not in agent_status_lower and 'failed' not in agent_status_lower %}
+{% set agent_error = 'failed' in agent_status_lower or 'error' in agent_status_lower %}
+{% set can_resume_agent = agent_session and ('idle' in agent_status_lower or 'aborted' in agent_status_lower or not state.agent_process_running) %}
+{% set primary_agent_label = 'Continue Tuning Agent' if can_resume_agent else 'Start Tuning Agent' %}
+{% set show_abort_agent = state.agent_process_running and 'idle' not in agent_status_lower %}
+<div class="agent-banner {% if agent_error %}agent-banner-error{% elif agent_working %}agent-banner-working{% endif %}">
+  <div class="agent-banner-main">
+    <span class="agent-indicator{% if agent_working %} agent-indicator-working{% endif %}" aria-hidden="true"></span>
+    <div>
+      <div class="agent-banner-label">Tuning Agent</div>
+      <div class="agent-banner-status"><span id="agent-status" class="status-pill">{{ agent_status }}</span>{% if agent_working %}<span class="working-text">Working</span>{% endif %}</div>
+    </div>
+  </div>
+  <div class="agent-banner-side">
+    <div class="live-status status-pill"><span id="live-dot" class="live-dot on"></span><span id="live-status">Live events connected</span></div>
+    {% if agent_session and agent_session.updated_at %}<div class="agent-banner-time">Updated {{ agent_session.updated_at | local_time }}</div>{% endif %}
+    {% if show_abort_agent %}
+    <form class="inline-agent-action" method="post" action="/loops/{{ loop_id }}/tuning-agent/abort"><input type="hidden" name="next" value="/loops/{{ loop_id }}/workbench"><button type="submit">Abort Tuning Agent</button></form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="workbench-grid">
+  <aside class="side-panel">
+    <div class="card status-card">
+      <h2>Loop context</h2>
+      <dl class="status-list context-list">
+        <dt>Loop</dt><dd>#{{ state.loop.id }} · {{ state.loop.status }}</dd>
+        <dt>Build</dt><dd>#{{ state.loop.build_id }} {{ state.loop.build_name }}</dd>
+        <dt>Tune Goal</dt><dd>{{ state.loop.tune_goal }}</dd>
+        <dt>Tuning Agent</dt><dd>{{ agent_status }}</dd>
+        <dt>Open tasks</dt><dd>{{ state.open_task_count }}</dd>
+        <dt>Open notifications</dt><dd>{{ state.open_notification_count }}</dd>
+      </dl>
+    </div>
+  </aside>
+
+  <main class="main-panel">
+    <div class="card current-card{% if not state.current_task %} current-card-empty{% endif %}">
+      {% if state.current_task %}
+        {% set task = state.current_task %}
+        <p class="section-label">Current Operator Task</p>
+        <h2>{{ task.title }}</h2>
+        <p class="muted">Oldest open Operator Task · created {{ task.created_at | local_time }}</p>
+        <p>{{ task.body }}</p>
+        {% if task.kind == 'request_flight_capture' and task.payload.operator_message %}<pre>{{ task.payload.operator_message }}</pre>{% endif %}
+        {% if task.kind == 'confirm_build' and task.payload.fc_snapshot %}<details open><summary>FC snapshot</summary><pre>{{ task.payload.fc_snapshot | tojson(indent=2) }}</pre></details>{% endif %}
+        <h3>Operator response</h3>
+        {% with next_url='/loops/' ~ loop_id ~ '/workbench', builds=state.builds %}{% include "_task_response_forms.html" %}{% endwith %}
+        <p><a href="/tasks/{{ task.id }}">Open full task #{{ task.id }}</a></p>
+      {% else %}
+        <p class="section-label">Workbench status</p>
+        {% if agent_working %}
+        <h2>Tuning Agent is working</h2>
+        <p>No open Operator Task. The Tuning Agent is currently {{ agent_status }}.</p>
+        <p><strong>Next action:</strong> wait for a live update or an Operator Task.</p>
+        {% else %}
+        <h2>No Operator action needed</h2>
+        <p>No open Operator Task. The Operator Console will update this workbench when the Tuning Agent requests input.</p>
+        {% if not state.agent_process_running %}
+        <p><strong>Next action:</strong> {{ primary_agent_label }} when ready.</p>
+        <form class="agent-primary-action workbench-primary-action" method="post" action="/loops/{{ loop_id }}/tuning-agent/start">
+          <input type="hidden" name="next" value="/loops/{{ loop_id }}/workbench">
+          <input type="hidden" name="bridge_host" value="{{ agent_session.bridge_host if agent_session and agent_session.bridge_host else default_bridge_host }}">
+          <input type="hidden" name="pi_model" value="{{ agent_session.pi_model if agent_session and agent_session.pi_model else default_pi_model }}">
+          <input type="hidden" name="thinking_level" value="{{ agent_session.thinking_level if agent_session and agent_session.thinking_level else default_thinking_level }}">
+          {% if can_resume_agent %}
+          <button type="submit" formaction="/loops/{{ loop_id }}/tuning-agent/continue">{{ primary_agent_label }}</button>
+          {% else %}
+          <button type="submit">{{ primary_agent_label }}</button>
+          {% endif %}
+        </form>
+        {% else %}
+        <p><strong>Next action:</strong> wait for a live update or an Operator Task.</p>
+        {% endif %}
+        {% endif %}
+      {% endif %}
+    </div>
+
+    <div class="card activity-card">
+      <p class="section-label">Workbench Activity</p>
+      <h2>Recent Loop activity</h2>
+      {% if state.events %}
+      <ol class="activity-list">
+        {% for event in state.events|reverse %}
+        {% if loop.index <= 6 %}
+        <li class="activity-item activity-{{ event.kind }}">
+          <div class="activity-meta">
+            <div>
+              <span class="activity-pill">{{ event.type_label }}</span>
+              {% if event.status_label %}<span class="activity-pill activity-status">{{ event.status_label }}</span>{% endif %}
+              {% if event.href %}<a href="{{ event.href }}"><strong>{{ event.title }}</strong></a>{% else %}<strong>{{ event.title }}</strong>{% endif %}
+            </div>
+            {% if event.created_at %}<span>{{ event.created_at | local_time }}</span>{% endif %}
+          </div>
+          <p>{{ event.body }}</p>
+        </li>
+        {% endif %}
+        {% endfor %}
+      </ol>
+      {% else %}
+      <p>No durable Loop activity recorded yet.</p>
+      {% endif %}
+    </div>
+  </main>
+
+  <aside class="side-panel right-panel">
+    <div class="card agent-control-card">
+      <h2>Agent controls</h2>
+      {% if show_abort_agent %}
+      <p class="muted">The Tuning Agent is running. Settings below apply the next time it starts or resumes.</p>
+      <form method="post" action="/loops/{{ loop_id }}/tuning-agent/abort"><input type="hidden" name="next" value="/loops/{{ loop_id }}/workbench"><button type="submit">Abort Tuning Agent</button></form>
+      {% else %}
+      <p class="muted">Use the main workbench action for the default start or continue path.</p>
+      {% endif %}
+      <details class="agent-controls">
+        <summary>Connection and model settings</summary>
+        <form method="post" action="/loops/{{ loop_id }}/tuning-agent/start">
+          <input type="hidden" name="next" value="/loops/{{ loop_id }}/workbench">
+          <label>FCS Bridge host <input name="bridge_host" value="{{ agent_session.bridge_host if agent_session and agent_session.bridge_host else default_bridge_host }}"></label>
+          <label>Pi model
+            <select name="pi_model">
+              {% set selected_model = agent_session.pi_model if agent_session and agent_session.pi_model else default_pi_model %}
+              {% for model_id, label in pi_model_choices.items() %}<option value="{{ model_id }}"{% if selected_model == model_id %} selected{% endif %}>{{ label }}</option>{% endfor %}
+            </select>
+          </label>
+          <label>Thinking
+            <select name="thinking_level">
+              {% set selected_thinking = agent_session.thinking_level if agent_session and agent_session.thinking_level else default_thinking_level %}
+              {% for level in thinking_level_choices %}<option value="{{ level }}"{% if selected_thinking == level %} selected{% endif %}>{{ level }}</option>{% endfor %}
+            </select>
+          </label>
+          {% if not show_abort_agent %}
+          <button type="submit">Start or resume</button>
+          {% if agent_session and not state.agent_process_running and 'idle' not in agent_status_lower %}<button type="submit" formaction="/loops/{{ loop_id }}/tuning-agent/continue">Continue</button>{% endif %}
+          {% endif %}
+        </form>
+      </details>
+    </div>
+
+    {% if state.open_notifications %}
+    <div class="card">
+      <h2>Operator Notifications</h2>
+      {% for notification in state.open_notifications %}
+      <div class="mini-card">
+        <p><strong>#{{ notification.id }} {{ notification.title }}</strong></p>
+        <p>{{ notification.body }}</p>
+        <form class="inline-form" method="post" action="/notifications/{{ notification.id }}/acknowledge">
+          <input type="hidden" name="next" value="/loops/{{ loop_id }}/workbench">
+          <label>Operator notes</label><textarea name="notes"></textarea><button type="submit">Acknowledge</button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </aside>
+</div>
