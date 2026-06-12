@@ -11,7 +11,7 @@ from tuna_core.services.diagnoses import record_diagnosis
 from tuna_core.services.iterations import complete_no_change, create_iteration
 from tuna_core.services.logs import import_blackbox_log
 from tuna_core.services.loops import create_loop
-from tuna_core.services.tune_updates import mark_applied, propose_tune_update, reject
+from tuna_core.services.tune_updates import approve_for_write, mark_applied, propose_tune_update, reject
 from tuna_core.storage import connect, init_db
 
 
@@ -74,6 +74,9 @@ class TuneWorkflowTests(unittest.TestCase):
             {"d_pitch": 48},
             cli_text="set d_pitch = 48",
         )
+        with self.assertRaises(ValueError):
+            mark_applied(self.conn, update_id)
+        approve_for_write(self.conn, update_id)
         mark_applied(self.conn, update_id)
         row = self.conn.execute("SELECT status FROM tuning_iterations WHERE id = ?", (iteration_id,)).fetchone()
         self.assertEqual(row["status"], "completed")
@@ -86,6 +89,32 @@ class TuneWorkflowTests(unittest.TestCase):
         row = self.conn.execute("SELECT status, rejection_reason FROM tune_updates WHERE id = ?", (update_id,)).fetchone()
         self.assertEqual(row["status"], "rejected")
         self.assertIn("confirmation", row["rejection_reason"])
+
+    def test_tune_update_status_transitions_are_enforced(self):
+        build_id = create_build(self.conn, "5 inch")
+        loop_id = create_loop(self.conn, build_id, "reduce propwash")
+        iteration_id = create_iteration(self.conn, loop_id)
+        record_diagnosis(self.conn, iteration_id, "Needs review")
+        update_id = propose_tune_update(self.conn, iteration_id, build_id, {"p_roll": 44})
+
+        with self.assertRaises(ValueError):
+            mark_applied(self.conn, update_id)
+        approve_for_write(self.conn, update_id)
+        with self.assertRaises(ValueError):
+            reject(self.conn, update_id, "too late")
+        mark_applied(self.conn, update_id)
+        with self.assertRaises(ValueError):
+            approve_for_write(self.conn, update_id)
+
+    def test_storage_status_contracts_reject_invalid_states(self):
+        build_id = create_build(self.conn, "5 inch")
+        with self.assertRaises(Exception):
+            self.conn.execute("INSERT INTO loops (build_id, tune_goal, status) VALUES (?, ?, ?)", (build_id, "baseline", "maybe"))
+        with self.assertRaises(Exception):
+            self.conn.execute(
+                "INSERT INTO blackbox_logs (build_id, source_path, managed_path, sha256, size_bytes, parse_status, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (build_id, "source", "managed", "abc", 1, "mystery", "{}"),
+            )
 
     def test_complete_iteration_with_no_change_requires_diagnosis_and_reason(self):
         build_id = create_build(self.conn, "5 inch")

@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS loops (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   build_id INTEGER NOT NULL REFERENCES builds(id),
   tune_goal TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'open',
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   ended_at TEXT
 );
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS blackbox_logs (
   managed_path TEXT NOT NULL,
   sha256 TEXT NOT NULL UNIQUE,
   size_bytes INTEGER NOT NULL,
-  parse_status TEXT NOT NULL,
+  parse_status TEXT NOT NULL CHECK (parse_status IN ('readable', 'unsupported', 'malformed', 'unreadable')),
   metadata_json TEXT NOT NULL,
   warnings_json TEXT NOT NULL DEFAULT '[]',
   imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -36,8 +36,8 @@ CREATE TABLE IF NOT EXISTS blackbox_logs (
 CREATE TABLE IF NOT EXISTS tuning_iterations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   loop_id INTEGER NOT NULL REFERENCES loops(id),
-  status TEXT NOT NULL DEFAULT 'open',
-  result TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'completed', 'failed')),
+  result TEXT NOT NULL DEFAULT '' CHECK (result IN ('', 'failed', 'no_change', 'tune_update_applied', 'tune_update_rejected')),
   no_change_reason TEXT NOT NULL DEFAULT '',
   failure_reason TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS tune_updates (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   iteration_id INTEGER NOT NULL UNIQUE REFERENCES tuning_iterations(id),
   build_id INTEGER NOT NULL REFERENCES builds(id),
-  status TEXT NOT NULL DEFAULT 'proposed',
+  status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'approved_pending_write', 'write_failed', 'applied', 'rejected')),
   settings_json TEXT NOT NULL,
   cli_text TEXT NOT NULL DEFAULT '',
   rejection_reason TEXT,
@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS tune_updates (
 CREATE TABLE IF NOT EXISTS operator_tasks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'open',
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved')),
   title TEXT NOT NULL,
   body TEXT NOT NULL DEFAULT '',
   payload_json TEXT NOT NULL DEFAULT '{}',
@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS operator_tasks (
 CREATE TABLE IF NOT EXISTS operator_notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'open',
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'acknowledged')),
   title TEXT NOT NULL,
   body TEXT NOT NULL DEFAULT '',
   payload_json TEXT NOT NULL DEFAULT '{}',

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from . import analyze_csv_log, decode_blackbox_log, parse_blackbox_metadata, read_segment_rows
+from .metadata import metadata_summary
 
 
 def _env_default(name: str, fallback: str) -> str:
@@ -20,19 +21,6 @@ def _print_json(payload: Any) -> None:
 
 def _error(exc: BaseException) -> dict[str, Any]:
     return {"error": {"kind": exc.__class__.__name__, "message": str(exc), "retryable": False}}
-
-
-def _metadata_summary(metadata: dict[str, Any]) -> dict[str, Any]:
-    fields = metadata.get("fields") if isinstance(metadata.get("fields"), dict) else {}
-    return {
-        "firmware_type": metadata.get("firmware_type"),
-        "firmware_revision": metadata.get("firmware_revision"),
-        "firmware_date": metadata.get("firmware_date"),
-        "craft_name": metadata.get("craft_name"),
-        "data_version": metadata.get("data_version"),
-        "pids": metadata.get("pids"),
-        "field_counts": {key: len(value) for key, value in fields.items() if isinstance(value, list)},
-    }
 
 
 def _write_json_file(path_text: str | None, payload: dict[str, Any]) -> str | None:
@@ -102,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
             payload = {
                 "path": args.path,
                 "parse_status": parsed.parse_status,
-                "metadata_summary": _metadata_summary(parsed.metadata),
+                "metadata_summary": metadata_summary(parsed.metadata),
                 "warnings": parsed.warnings,
             }
             metadata_file = _write_json_file(args.metadata_json_file, parsed.metadata)

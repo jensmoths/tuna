@@ -5,6 +5,9 @@ description = "Tuna drone tuning tools"
 requires-python = ">=3.10"
 dependencies = ["Flask>=3.0", "numpy>=1.26", "pyserial>=3.5"]
 
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
 [project.scripts]
 tuna-core = "tuna_core.cli.main:main"
 tuna-console = "tuna_console.cli:main"
