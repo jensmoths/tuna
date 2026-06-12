@@ -14,9 +14,11 @@ Canonical domain terms and workflow rules live in `docs/domain-model.md` and `do
 
 ```bash
 make install-dev  # install Tuna plus test dependencies into the active environment
-make smoke   # dependency-light syntax/import compilation
-make test    # pytest suite, requires project test dependencies
-make check   # smoke + test
+make smoke      # dependency-light syntax/import compilation
+make structure  # stdlib architecture boundary/godfile regression checks
+make quick      # smoke + structure + focused workflow/FCS regression tests
+make test       # pytest suite, requires project test dependencies
+make check      # smoke + structure + full test suite
 ```
 
 Run `make install-dev` before the full test suite in a new environment.
