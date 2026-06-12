@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
-from tuna_core.cli.output import emit, emit_command_error, print_json, row_to_dict
+from tuna_core.cli.output import emit, emit_command_error, parse_json_object, print_json, row_to_dict
 from tuna_core.services.diagnoses import record_diagnosis
 from tuna_core.services.iterations import complete_no_change, complete_no_change_with_diagnosis, create_iteration
 from tuna_core.services.tune_updates import approve_for_write, mark_applied, propose_tune_update, reject, record_application_failure
@@ -34,8 +33,15 @@ def _handle_iteration_command(conn: Any, args: Any) -> int | None:
         print_json(row_to_dict(row) if args.json else {"iteration_id": args.iteration_id})
     elif args.area == "iteration" and args.action == "complete-with-diagnosis":
         try:
-            diagnosis_id = complete_no_change_with_diagnosis(conn, args.iteration_id, body=args.body, reason=args.reason, confidence=args.confidence, evidence=json.loads(args.evidence_json))
-        except (json.JSONDecodeError, ValueError) as exc:
+            diagnosis_id = complete_no_change_with_diagnosis(
+                conn,
+                args.iteration_id,
+                body=args.body,
+                reason=args.reason,
+                confidence=args.confidence,
+                evidence=parse_json_object(args.evidence_json, "Diagnosis evidence"),
+            )
+        except ValueError as exc:
             emit_command_error(exc, args.json)
             return 1
         row = conn.execute("SELECT * FROM tuning_iterations WHERE id = ?", (args.iteration_id,)).fetchone()
@@ -50,8 +56,14 @@ def _handle_iteration_command(conn: Any, args: Any) -> int | None:
 def _handle_diagnosis_command(conn: Any, args: Any) -> int | None:
     if args.area == "diagnosis" and args.action == "record":
         try:
-            diagnosis_id = record_diagnosis(conn, args.iteration_id, args.body, confidence=args.confidence, evidence=json.loads(args.evidence_json))
-        except (json.JSONDecodeError, ValueError) as exc:
+            diagnosis_id = record_diagnosis(
+                conn,
+                args.iteration_id,
+                args.body,
+                confidence=args.confidence,
+                evidence=parse_json_object(args.evidence_json, "Diagnosis evidence"),
+            )
+        except ValueError as exc:
             emit_command_error(exc, args.json)
             return 1
         emit({"diagnosis_id": diagnosis_id}, args.json)
@@ -66,19 +78,45 @@ def _handle_update_command(conn: Any, args: Any) -> int | None:
     if args.action == "pending-writes":
         _print_pending_writes(conn)
     elif args.action == "propose":
-        update_id = propose_tune_update(conn, args.iteration_id, args.build_id, json.loads(args.settings_json), cli_text=args.cli_text)
+        try:
+            update_id = propose_tune_update(
+                conn,
+                args.iteration_id,
+                args.build_id,
+                parse_json_object(args.settings_json, "Tune Update settings"),
+                cli_text=args.cli_text,
+            )
+        except ValueError as exc:
+            emit_command_error(exc, args.json)
+            return 1
         emit({"update_id": update_id}, args.json)
     elif args.action == "approve-for-write":
-        approve_for_write(conn, args.update_id)
+        try:
+            approve_for_write(conn, args.update_id)
+        except ValueError as exc:
+            emit_command_error(exc, args.json)
+            return 1
         emit({"update_id": args.update_id, "status": "approved_pending_write"}, args.json)
     elif args.action == "record-write-failure":
-        record_application_failure(conn, args.update_id, args.failure)
+        try:
+            record_application_failure(conn, args.update_id, args.failure)
+        except ValueError as exc:
+            emit_command_error(exc, args.json)
+            return 1
         emit({"update_id": args.update_id, "status": "write_failed"}, args.json)
     elif args.action == "apply":
-        mark_applied(conn, args.update_id)
+        try:
+            mark_applied(conn, args.update_id)
+        except ValueError as exc:
+            emit_command_error(exc, args.json)
+            return 1
         emit({"update_id": args.update_id, "status": "applied"}, args.json)
     elif args.action == "reject":
-        reject(conn, args.update_id, args.reason)
+        try:
+            reject(conn, args.update_id, args.reason)
+        except ValueError as exc:
+            emit_command_error(exc, args.json)
+            return 1
         emit({"update_id": args.update_id, "status": "rejected"}, args.json)
     else:
         return None
@@ -106,6 +144,6 @@ def _print_pending_writes(conn: Any) -> None:
     payload = []
     for row in rows:
         item = row_to_dict(row)
-        item["settings"] = json.loads(item.pop("settings_json"))
+        item["settings"] = parse_json_object(item.pop("settings_json"), "stored Tune Update settings")
         payload.append(item)
     print_json(payload)

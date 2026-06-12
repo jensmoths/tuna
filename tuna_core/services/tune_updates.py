@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Mapping
 from typing import Any
 
 from tuna_core.domain.models import IterationStatus, TuneUpdateStatus
@@ -22,11 +23,36 @@ def _require_status(row: sqlite3.Row, allowed: set[TuneUpdateStatus]) -> None:
         raise ValueError(f"Tune Update {row['id']} status is {status.value}; expected one of: {allowed_text}")
 
 
-def propose_tune_update(conn: sqlite3.Connection, iteration_id: int, build_id: int, settings: dict[str, Any], *, cli_text: str = "") -> int:
-    ensure_absolute_settings(settings)
+def _require_open_iteration_for_build(conn: sqlite3.Connection, iteration_id: int, build_id: int) -> None:
+    row = conn.execute(
+        """
+        SELECT i.status, l.build_id
+        FROM tuning_iterations i
+        JOIN loops l ON l.id = i.loop_id
+        WHERE i.id = ?
+        """,
+        (iteration_id,),
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"Tuning Iteration {iteration_id} does not exist")
+    if row["status"] != IterationStatus.OPEN.value:
+        raise ValueError(f"Tuning Iteration {iteration_id} is not open")
+    if int(row["build_id"]) != build_id:
+        raise ValueError("Tune Update Build must match the Tuning Iteration Loop Build")
+    diagnosis = conn.execute("SELECT id FROM diagnoses WHERE iteration_id = ?", (iteration_id,)).fetchone()
+    if diagnosis is None:
+        raise ValueError("Tune Update proposal requires a recorded Diagnosis")
+    existing_update = conn.execute("SELECT id FROM tune_updates WHERE iteration_id = ?", (iteration_id,)).fetchone()
+    if existing_update is not None:
+        raise ValueError("Tuning Iteration already has a Tune Update")
+
+
+def propose_tune_update(conn: sqlite3.Connection, iteration_id: int, build_id: int, settings: Mapping[str, Any], *, cli_text: str = "") -> int:
+    normalized_settings = ensure_absolute_settings(settings)
+    _require_open_iteration_for_build(conn, iteration_id, build_id)
     cur = conn.execute(
         "INSERT INTO tune_updates (iteration_id, build_id, settings_json, cli_text) VALUES (?, ?, ?, ?)",
-        (iteration_id, build_id, json.dumps(settings, sort_keys=True), cli_text),
+        (iteration_id, build_id, json.dumps(normalized_settings, sort_keys=True), cli_text),
     )
     conn.commit()
     return int(cur.lastrowid)

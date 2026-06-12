@@ -19,6 +19,16 @@ def loads_json_object(raw: str | None) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def parse_json_object(raw: str, label: str) -> dict[str, Any]:
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} must be valid JSON: {exc.msg}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be a JSON object")
+    return value
+
+
 def print_json(payload: Any) -> None:
     print(json.dumps(payload, indent=2, sort_keys=True))
 

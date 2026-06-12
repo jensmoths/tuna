@@ -116,6 +116,49 @@ class TuneCliTests(unittest.TestCase):
         self.assertEqual(status["logs"], 1)
         self.assertEqual(status["iterations_open"], 0)
 
+    def test_update_propose_rejects_non_object_settings_json(self):
+        self.run_cli_json("db", "init")
+        build = self.run_cli_json("build", "create", "5 inch")
+        loop = self.run_cli_json("loop", "create", "--build-id", str(build["build_id"]), "--tune-goal", "reduce propwash")
+        iteration = self.run_cli_json("iteration", "create", "--loop-id", str(loop["loop_id"]))
+        self.run_cli_json("diagnosis", "record", "--iteration-id", str(iteration["iteration_id"]), "--body", "Needs a Tune Update")
+
+        code, result = self.run_cli_json_with_code(
+            "update",
+            "propose",
+            "--iteration-id",
+            str(iteration["iteration_id"]),
+            "--build-id",
+            str(build["build_id"]),
+            "--settings-json",
+            '["p_roll",44]',
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(result["error"]["kind"], "ValueError")
+        self.assertIn("JSON object", result["error"]["message"])
+
+    def test_update_propose_requires_recorded_diagnosis(self):
+        self.run_cli_json("db", "init")
+        build = self.run_cli_json("build", "create", "5 inch")
+        loop = self.run_cli_json("loop", "create", "--build-id", str(build["build_id"]), "--tune-goal", "reduce propwash")
+        iteration = self.run_cli_json("iteration", "create", "--loop-id", str(loop["loop_id"]))
+
+        code, result = self.run_cli_json_with_code(
+            "update",
+            "propose",
+            "--iteration-id",
+            str(iteration["iteration_id"]),
+            "--build-id",
+            str(build["build_id"]),
+            "--settings-json",
+            '{"p_roll":44}',
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(result["error"]["kind"], "ValueError")
+        self.assertIn("Diagnosis", result["error"]["message"])
+
     def test_iteration_complete_no_change_cli(self):
         self.run_cli_json("db", "init")
         build = self.run_cli_json("build", "create", "5 inch")

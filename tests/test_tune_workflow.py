@@ -82,6 +82,7 @@ class TuneWorkflowTests(unittest.TestCase):
         self.assertEqual(row["status"], "completed")
 
         iteration_id = create_iteration(self.conn, loop_id)
+        record_diagnosis(self.conn, iteration_id, "Try a small P increase", confidence="low")
         update_id = propose_tune_update(self.conn, iteration_id, build_id, {"p_roll": 44})
         with self.assertRaises(ValueError):
             reject(self.conn, update_id, "")
@@ -105,6 +106,34 @@ class TuneWorkflowTests(unittest.TestCase):
         mark_applied(self.conn, update_id)
         with self.assertRaises(ValueError):
             approve_for_write(self.conn, update_id)
+
+    def test_tune_update_proposal_requires_iteration_contracts(self):
+        build_id = create_build(self.conn, "5 inch")
+        other_build_id = create_build(self.conn, "backup airframe")
+        loop_id = create_loop(self.conn, build_id, "reduce propwash")
+        iteration_id = create_iteration(self.conn, loop_id)
+
+        with self.assertRaisesRegex(ValueError, "Diagnosis"):
+            propose_tune_update(self.conn, iteration_id, build_id, {"p_roll": 44})
+
+        record_diagnosis(self.conn, iteration_id, "Needs review")
+        with self.assertRaisesRegex(ValueError, "Build"):
+            propose_tune_update(self.conn, iteration_id, other_build_id, {"p_roll": 44})
+
+        update_id = propose_tune_update(self.conn, iteration_id, build_id, {" p_roll ": 44})
+        row = self.conn.execute("SELECT settings_json FROM tune_updates WHERE id = ?", (update_id,)).fetchone()
+        self.assertEqual(json.loads(row["settings_json"]), {"p_roll": 44})
+
+        with self.assertRaisesRegex(ValueError, "already has"):
+            propose_tune_update(self.conn, iteration_id, build_id, {"i_roll": 80})
+
+    def test_tune_update_settings_must_be_flat_absolute_targets(self):
+        with self.assertRaisesRegex(ValueError, "JSON object"):
+            propose_tune_update(self.conn, 1, 1, [])  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "scalar"):
+            propose_tune_update(self.conn, 1, 1, {"profile": {"p_roll": 44}})
+        with self.assertRaisesRegex(ValueError, "absolute"):
+            propose_tune_update(self.conn, 1, 1, {"d_pitch": " -2"})
 
     def test_storage_status_contracts_reject_invalid_states(self):
         build_id = create_build(self.conn, "5 inch")
