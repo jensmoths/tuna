@@ -3,10 +3,23 @@ from __future__ import annotations
 from typing import Any
 
 CONFIG_KEYS = (
+    "pid_profile",
+    "rate_profile",
+    "debug_mode",
+    "blackbox_rate_num",
+    "blackbox_rate_denom",
+    "blackbox_high_resolution",
     "rollPID",
     "pitchPID",
     "yawPID",
     "levelPID",
+    "roll_rate",
+    "pitch_rate",
+    "yaw_rate",
+    "roll_expo",
+    "pitch_expo",
+    "yaw_expo",
+    "rates_type",
     "d_min_roll",
     "d_min_pitch",
     "d_min_yaw",
@@ -21,6 +34,9 @@ CONFIG_KEYS = (
     "dyn_notch_q",
     "dyn_notch_min_hz",
     "dyn_notch_max_hz",
+    "rpm_filter_harmonics",
+    "rpm_filter_q",
+    "rpm_filter_min_hz",
     "dterm_lowpass_hz",
     "dterm_lowpass2_hz",
     "dterm_notch_hz",
@@ -156,9 +172,253 @@ def compare_analyses(before: dict[str, Any], after: dict[str, Any]) -> dict[str,
         },
         "tracking_changes": tracking,
         "pid_term_changes": pid_terms,
+        "step_response_changes": _step_response_changes(before, after, axes),
+        "filter_changes": _filter_changes(before, after, axes),
+        "noise_changes": _noise_changes(before, after),
+        "rpm_filter_changes": {
+            "harmonic_match_count": _metric_delta(
+                len(_nested_get(before, ("rpm_analysis", "possible_harmonic_matches")) or []),
+                len(_nested_get(after, ("rpm_analysis", "possible_harmonic_matches")) or []),
+            ),
+            "warnings": {"before": _nested_get(before, ("rpm_analysis", "warnings")), "after": _nested_get(after, ("rpm_analysis", "warnings"))},
+        },
+        "propwash_changes": _propwash_changes(before, after),
+        "chirp_changes": _chirp_changes(before, after, axes),
+        "outcome_summary": _outcome_summary(before, after, axes),
         "segment_count_changes": segment_counts,
+        "tuning_evidence_changes": {
+            "filter": {
+                axis: {
+                    "before": _nested_get(before, ("tuning_evidence", "filter_diagnosis", "axes", axis, "classification")),
+                    "after": _nested_get(after, ("tuning_evidence", "filter_diagnosis", "axes", axis, "classification")),
+                }
+                for axis in axes
+            },
+            "pid_response": {
+                axis: {
+                    "before": _nested_get(before, ("tuning_evidence", "pid_response", "axes", axis, "classifications")),
+                    "after": _nested_get(after, ("tuning_evidence", "pid_response", "axes", axis, "classifications")),
+                }
+                for axis in axes
+            },
+        },
         "quality": {"before": before.get("quality"), "after": after.get("quality")},
     }
+
+
+def filter_evidence_view(analysis: dict[str, Any]) -> dict[str, Any]:
+    tuning_evidence = _tuning_evidence(analysis)
+    return {
+        "filter_diagnosis": tuning_evidence.get("filter_diagnosis"),
+        "filter_analysis": analysis.get("filter_analysis"),
+        "active_filter_analysis": _nested_get(analysis, ("active_analysis", "filter_analysis")),
+        "rpm_analysis": analysis.get("rpm_analysis"),
+        "noise_peaks": limited_events(analysis.get("noise_peaks", {}), "peaks", 8),
+        "capture_plan": tuning_evidence.get("capture_plan"),
+    }
+
+
+def pid_response_view(analysis: dict[str, Any]) -> dict[str, Any]:
+    tuning_evidence = _tuning_evidence(analysis)
+    return {
+        "pid_response": tuning_evidence.get("pid_response"),
+        "step_response": analysis.get("step_response"),
+        "pid_term_analysis": analysis.get("pid_term_analysis"),
+        "active_step_response": _nested_get(analysis, ("active_analysis", "step_response")),
+        "active_pid_term_analysis": _nested_get(analysis, ("active_analysis", "pid_term_analysis")),
+    }
+
+
+def noise_peak_view(analysis: dict[str, Any], limit: int = 8) -> dict[str, Any]:
+    return {
+        "noise_peaks": limited_events(analysis.get("noise_peaks", {}), "peaks", limit),
+        "active_noise_peaks": limited_events(_nested_get(analysis, ("active_analysis", "noise_peaks")) or {}, "peaks", limit),
+        "spectrum_warnings": _nested_get(analysis, ("spectrum", "warnings")),
+    }
+
+
+def rpm_filter_view(analysis: dict[str, Any]) -> dict[str, Any]:
+    tuning_evidence = _tuning_evidence(analysis)
+    return {
+        "rpm_analysis": analysis.get("rpm_analysis"),
+        "windowed_frequency_throttle_heatmap": analysis.get("windowed_frequency_throttle_heatmap"),
+        "filter_diagnosis": tuning_evidence.get("filter_diagnosis"),
+    }
+
+
+def propwash_view(analysis: dict[str, Any], limit: int = 5) -> dict[str, Any]:
+    return limited_events(analysis.get("propwash_analysis", {}), "segments", limit)
+
+
+def capture_plan_view(analysis: dict[str, Any]) -> dict[str, Any]:
+    return _tuning_evidence(analysis).get("capture_plan") or {}
+
+
+def _tuning_evidence(analysis: dict[str, Any]) -> dict[str, Any]:
+    evidence = analysis.get("tuning_evidence")
+    if isinstance(evidence, dict):
+        return evidence
+    from .evidence import build_tuning_evidence
+
+    return build_tuning_evidence(analysis)
+
+
+def _step_response_changes(before: dict[str, Any], after: dict[str, Any], axes: tuple[str, ...]) -> dict[str, Any]:
+    metrics = ("mean_latency_seconds", "mean_rise_time_seconds", "mean_overshoot_fraction", "mean_settling_error_fraction", "bounce_back_events")
+    return {
+        axis: {
+            metric: _metric_delta(
+                _nested_get(before, ("step_response", "axes", axis, "summary", metric)),
+                _nested_get(after, ("step_response", "axes", axis, "summary", metric)),
+            )
+            for metric in metrics
+        }
+        for axis in axes
+    }
+
+
+def _filter_changes(before: dict[str, Any], after: dict[str, Any], axes: tuple[str, ...]) -> dict[str, Any]:
+    return {
+        axis: {
+            "250_500hz_attenuation_ratio": _metric_delta(
+                _nested_get(before, ("filter_analysis", "axes", axis, "bands", "250-500Hz", "attenuation_ratio")),
+                _nested_get(after, ("filter_analysis", "axes", axis, "bands", "250-500Hz", "attenuation_ratio")),
+            ),
+            "classification": {
+                "before": _nested_get(before, ("tuning_evidence", "filter_diagnosis", "axes", axis, "classification")),
+                "after": _nested_get(after, ("tuning_evidence", "filter_diagnosis", "axes", axis, "classification")),
+            },
+        }
+        for axis in axes
+    }
+
+
+def _noise_changes(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "noise_peak_count": _metric_delta(
+            len(_nested_get(before, ("noise_peaks", "peaks")) or []),
+            len(_nested_get(after, ("noise_peaks", "peaks")) or []),
+        ),
+        "warnings": {"before": _nested_get(before, ("noise_peaks", "warnings")), "after": _nested_get(after, ("noise_peaks", "warnings"))},
+    }
+
+
+def _propwash_changes(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "segment_count": _metric_delta(
+            _nested_get(before, ("propwash_analysis", "summary", "segment_count")),
+            _nested_get(after, ("propwash_analysis", "summary", "segment_count")),
+        ),
+        "max_gyro_mean_abs_delta": _metric_delta(
+            _nested_get(before, ("propwash_analysis", "summary", "max_gyro_mean_abs_delta")),
+            _nested_get(after, ("propwash_analysis", "summary", "max_gyro_mean_abs_delta")),
+        ),
+        "max_tracking_error": _metric_delta(
+            _nested_get(before, ("propwash_analysis", "summary", "max_tracking_error")),
+            _nested_get(after, ("propwash_analysis", "summary", "max_tracking_error")),
+        ),
+    }
+
+
+def _chirp_changes(before: dict[str, Any], after: dict[str, Any], axes: tuple[str, ...]) -> dict[str, Any]:
+    return {
+        axis: {
+            "bandwidth_hz": _metric_delta(
+                _nested_get(before, ("chirp_analysis", "axes", axis, "bandwidth_hz")),
+                _nested_get(after, ("chirp_analysis", "axes", axis, "bandwidth_hz")),
+            ),
+            "phase_margin_deg": _metric_delta(
+                _nested_get(before, ("chirp_analysis", "axes", axis, "phase_margin_deg")),
+                _nested_get(after, ("chirp_analysis", "axes", axis, "phase_margin_deg")),
+            ),
+            "resonant_peak_db": _metric_delta(
+                _nested_get(before, ("chirp_analysis", "axes", axis, "resonant_peak_db")),
+                _nested_get(after, ("chirp_analysis", "axes", axis, "resonant_peak_db")),
+            ),
+        }
+        for axis in axes
+    }
+
+
+def _outcome_summary(before: dict[str, Any], after: dict[str, Any], axes: tuple[str, ...]) -> dict[str, Any]:
+    improvements = []
+    regressions = []
+    notes = []
+    for axis in axes:
+        _score_lower_is_better(
+            improvements,
+            regressions,
+            f"{axis} tracking mean error",
+            _nested_get(before, ("tracking", axis, "mean_abs_error")),
+            _nested_get(after, ("tracking", axis, "mean_abs_error")),
+        )
+        _score_lower_is_better(
+            improvements,
+            regressions,
+            f"{axis} step overshoot",
+            _nested_get(before, ("step_response", "axes", axis, "summary", "mean_overshoot_fraction")),
+            _nested_get(after, ("step_response", "axes", axis, "summary", "mean_overshoot_fraction")),
+        )
+        _score_lower_is_better(
+            improvements,
+            regressions,
+            f"{axis} D-term high-frequency energy",
+            _nested_get(before, ("spectrum", "signals", f"axisD[{axes.index(axis)}]", "bands", "250-500Hz", "fraction")),
+            _nested_get(after, ("spectrum", "signals", f"axisD[{axes.index(axis)}]", "bands", "250-500Hz", "fraction")),
+        )
+    _score_lower_is_better(
+        improvements,
+        regressions,
+        "motor saturation samples",
+        _nested_get(before, ("activity", "motor_saturation_samples")),
+        _nested_get(after, ("activity", "motor_saturation_samples")),
+        minimum_change=1.0,
+    )
+    _score_lower_is_better(
+        improvements,
+        regressions,
+        "propwash max tracking error",
+        _nested_get(before, ("propwash_analysis", "summary", "max_tracking_error")),
+        _nested_get(after, ("propwash_analysis", "summary", "max_tracking_error")),
+    )
+    before_quality = before.get("quality") if isinstance(before.get("quality"), dict) else {}
+    after_quality = after.get("quality") if isinstance(after.get("quality"), dict) else {}
+    if before_quality.get("usable") is False or after_quality.get("usable") is False:
+        notes.append("At least one Blackbox Log has quality warnings; outcome confidence is limited")
+    if improvements and regressions:
+        classification = "mixed"
+    elif improvements:
+        classification = "improved"
+    elif regressions:
+        classification = "worse"
+    else:
+        classification = "inconclusive"
+    return {
+        "classification": classification,
+        "improvements": improvements,
+        "regressions": regressions,
+        "notes": notes,
+    }
+
+
+def _score_lower_is_better(
+    improvements: list[dict[str, Any]],
+    regressions: list[dict[str, Any]],
+    metric: str,
+    before: Any,
+    after: Any,
+    *,
+    minimum_change: float = 0.05,
+) -> None:
+    if not isinstance(before, (int, float)) or not isinstance(after, (int, float)):
+        return
+    delta = after - before
+    threshold = max(minimum_change, abs(before) * 0.05)
+    item = {"metric": metric, "before": before, "after": after, "delta": delta}
+    if delta <= -threshold:
+        improvements.append(item)
+    elif delta >= threshold:
+        regressions.append(item)
 
 
 def limited_events(payload: dict[str, Any], key: str, limit: int) -> dict[str, Any]:

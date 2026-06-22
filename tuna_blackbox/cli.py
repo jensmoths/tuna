@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from . import analyze_csv_log, decode_blackbox_log, parse_blackbox_metadata, read_segment_rows
+from .analysis_views import capture_plan_view, filter_evidence_view, noise_peak_view, pid_response_view, propwash_view, rpm_filter_view
 from .metadata import metadata_summary
 
 
@@ -83,6 +84,16 @@ def main(argv: list[str] | None = None) -> int:
     rows.add_argument("--pad-rows", type=int, default=0)
     rows.add_argument("--json", action="store_true")
 
+    for name in ("filter-evidence", "pid-response", "rpm-filter", "capture-plan"):
+        view = sub.add_parser(name)
+        view.add_argument("csv_path")
+        view.add_argument("--json", action="store_true")
+    for name in ("noise-peaks", "propwash"):
+        view = sub.add_parser(name)
+        view.add_argument("csv_path")
+        view.add_argument("--limit", type=int, default=5)
+        view.add_argument("--json", action="store_true")
+
     args = parser.parse_args(argv)
     try:
         if args.command == "metadata":
@@ -115,6 +126,21 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "segment-rows":
             fields = [item.strip() for item in args.fields.split(",") if item.strip()] if args.fields else None
             payload = read_segment_rows(args.csv_path, start_row=args.start_row, end_row=args.end_row, fields=fields, pad_rows=args.pad_rows)
+        elif args.command in {"filter-evidence", "pid-response", "rpm-filter", "capture-plan", "noise-peaks", "propwash"}:
+            analysis = analyze_csv_log(args.csv_path)
+            if args.command == "filter-evidence":
+                payload = filter_evidence_view(analysis)
+            elif args.command == "pid-response":
+                payload = pid_response_view(analysis)
+            elif args.command == "rpm-filter":
+                payload = rpm_filter_view(analysis)
+            elif args.command == "capture-plan":
+                payload = capture_plan_view(analysis)
+            elif args.command == "noise-peaks":
+                payload = noise_peak_view(analysis, limit=args.limit)
+            else:
+                payload = propwash_view(analysis, limit=args.limit)
+            payload["csv_path"] = args.csv_path
         else:
             return 2
     except (OSError, RuntimeError, ValueError) as exc:

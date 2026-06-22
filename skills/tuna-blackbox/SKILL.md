@@ -53,6 +53,17 @@ tuna-blackbox decode flight.bbl --output artifacts/flight.csv --json
 tuna-blackbox analyze artifacts/flight.csv --output-json-file artifacts/flight.analysis.json --json
 ```
 
+Compact standalone evidence views for a decoded CSV:
+
+```bash
+tuna-blackbox filter-evidence artifacts/flight.csv --json
+tuna-blackbox pid-response artifacts/flight.csv --json
+tuna-blackbox rpm-filter artifacts/flight.csv --json
+tuna-blackbox capture-plan artifacts/flight.csv --json
+tuna-blackbox noise-peaks artifacts/flight.csv --limit 5 --json
+tuna-blackbox propwash artifacts/flight.csv --limit 5 --json
+```
+
 If `blackbox_decode` is not installed or fails, report that dependency/failure clearly and fall back to available metadata.
 
 ## Segment row inspection
@@ -74,6 +85,12 @@ Prefer compact `tuna-core analysis` views in a Tuna Loop before reading full ana
 
 - `analysis recordings --log-id ... --json` for internal Blackbox Log CSVs from a multi-log `.bbl`.
 - `analysis compare --before-log-id ... --after-log-id ... --json` for before/after metric deltas.
+- `analysis filter-evidence --log-id ... --json` for compact filter/noise/RPM evidence.
+- `analysis pid-response --log-id ... --json` for compact step/PID-term evidence.
+- `analysis noise-peaks --log-id ... --json` for bounded spectrum peak evidence.
+- `analysis rpm-filter --log-id ... --json` for RPM/dynamic-notch evidence and throttle-frequency summaries.
+- `analysis propwash --log-id ... --json` for propwash/throttle-recovery windows.
+- `analysis capture-plan --log-id ... --json` for missing data and next-capture recommendations.
 - `analysis throttle-chop --log-id ... --json` for throttle-min/motor-hang evidence.
 - `analysis cross-axis-flip --log-id ... --json` for roll-flip pitch/yaw disturbance evidence.
 
@@ -85,10 +102,15 @@ Use these analysis sections as evidence, when present:
 - `segments.throttle_punch`: throttle punch windows and related motor/noise behavior.
 - `timing_analysis`: loop timing and sample interval evidence.
 - `spectrum_analysis`: frequency peaks and noise bands.
+- `windowed_frequency_throttle_heatmap`: contiguous-window throttle/frequency evidence; prefer this over older concatenated bin summaries.
 - `filter_analysis`: filtered vs unfiltered gyro attenuation.
 - `rpm_analysis`: RPM harmonic matches or missing-debug reasons.
 - `motor_analysis`: motor ranges, saturation, throttle-bin summaries, and imbalance.
 - `pid_term_analysis`: P/I/D/feedforward activity and D-term/P-D balance proxies.
+- `active_analysis`: active-flight-only metrics, useful when idle/ground rows may contaminate whole-log metrics.
+- `segment_gated_analysis`: clean high-rate segment summaries that exclude motor-saturated segments.
+- `propwash_analysis`: throttle-recovery/propwash evidence when relevant maneuvers exist.
+- `tuning_evidence`: evidence-only filter/PID classifications and capture-plan recommendations.
 - `chirp_analysis`: chirp frequency-response evidence when a usable chirp capture exists.
 
 Prefer no change or more data when warnings indicate missing fields, short captures, absent maneuvers, motor saturation, or low chirp coherence.

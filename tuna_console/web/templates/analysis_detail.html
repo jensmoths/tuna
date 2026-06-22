@@ -10,6 +10,15 @@
 <h2>Activity</h2><pre>{{ item.analysis.activity | tojson(indent=2) }}</pre>
 <h2>Flight window</h2><pre>{{ item.analysis.flight | tojson(indent=2) }}</pre>
 <h2>Analysis capabilities</h2><pre>{{ item.analysis.analysis_capabilities | tojson(indent=2) }}</pre>
+{% set evidence = item.analysis.tuning_evidence or {} %}
+{% if evidence.filter_diagnosis %}
+<h2>Evidence summary</h2>
+<table><tr><th>Axis</th><th>Filter classification</th><th>Confidence</th><th>PID response</th></tr>
+{% for axis, data in evidence.filter_diagnosis.axes.items() %}<tr><td>{{ axis }}</td><td>{{ data.classification }}</td><td>{{ data.confidence }}</td><td>{{ (evidence.pid_response.axes[axis].classifications if evidence.pid_response and evidence.pid_response.axes and evidence.pid_response.axes[axis] else []) | join(", ") }}</td></tr>{% endfor %}</table>
+{% if evidence.capture_plan %}<div class="card"><h3>Capture plan</h3><p><strong>Need more data:</strong> {{ evidence.capture_plan.need_more_data }}</p><ul>{% for reason in evidence.capture_plan.reasons %}<li>{{ reason }}</li>{% else %}<li>No capture-plan blockers.</li>{% endfor %}</ul></div>{% endif %}
+{% endif %}
+<h2>Tuning evidence</h2><pre>{{ evidence | tojson(indent=2) }}</pre>
+<h2>Active-flight analysis</h2><pre>{{ item.analysis.active_analysis | tojson(indent=2) }}</pre>
 <h2>Timing</h2><pre>{{ item.analysis.timing | tojson(indent=2) }}</pre>
 <h2>Tracking</h2><pre>{{ item.analysis.tracking | tojson(indent=2) }}</pre>
 <h2>Segments</h2>
@@ -19,10 +28,14 @@
 <h3>Throttle-punch segments</h3>
 <table><tr><th>Start</th><th>Duration</th><th>Peak throttle</th><th>Motor sat</th><th>Rows</th></tr>
 {% for segment in item.analysis.segments.throttle_punch %}<tr><td>{{ "%.2f"|format(segment.start_time_seconds) }}s</td><td>{{ "%.2f"|format(segment.duration_seconds) }}s</td><td>{{ segment.throttle_peak }}</td><td>{{ segment.motor_saturation_samples }}</td><td>{{ segment.raw_data_ref.start_row }}-{{ segment.raw_data_ref.end_row }}</td></tr>{% else %}<tr><td colspan="5">No throttle-punch segments found.</td></tr>{% endfor %}</table>
+<h3>Propwash recovery segments</h3>
+<table><tr><th>Start</th><th>Duration</th><th>Throttle recovery</th><th>Max gyro delta</th><th>Flags</th><th>Rows</th></tr>
+{% for segment in item.analysis.segments.propwash %}<tr><td>{{ "%.2f"|format(segment.start_time_seconds) }}s</td><td>{{ "%.2f"|format(segment.duration_seconds) }}s</td><td>{{ segment.throttle_before_recovery }} → {{ segment.throttle_recovery_start }}</td><td>{{ "%.2f"|format(segment.summary.max_gyro_mean_abs_delta or 0) }}</td><td>{{ segment.flags | join(", ") }}</td><td>{{ segment.raw_data_ref.start_row }}-{{ segment.raw_data_ref.end_row }}</td></tr>{% else %}<tr><td colspan="6">No propwash recovery segments found.</td></tr>{% endfor %}</table>
 <pre>{{ item.analysis.segments | tojson(indent=2) }}</pre>
 <h2>Rough noise</h2><pre>{{ item.analysis.rough_noise | tojson(indent=2) }}</pre>
 <h2>Spectrum</h2><pre>{{ item.analysis.spectrum | tojson(indent=2) }}</pre>
 <h2>Frequency vs throttle</h2><pre>{{ item.analysis.frequency_throttle_heatmap | tojson(indent=2) }}</pre>
+<h2>Windowed frequency vs throttle</h2><pre>{{ item.analysis.windowed_frequency_throttle_heatmap | tojson(indent=2) }}</pre>
 <h2>Filter analysis</h2><pre>{{ item.analysis.filter_analysis | tojson(indent=2) }}</pre>
 <h2>Noise peaks</h2><pre>{{ item.analysis.noise_peaks | tojson(indent=2) }}</pre>
 <h2>RPM analysis</h2><pre>{{ item.analysis.rpm_analysis | tojson(indent=2) }}</pre>
@@ -37,5 +50,7 @@
 <h2>Step response</h2><pre>{{ item.analysis.step_response | tojson(indent=2) }}</pre>
 <h2>Motor analysis</h2><pre>{{ item.analysis.motor_analysis | tojson(indent=2) }}</pre>
 <h2>PID term analysis</h2><pre>{{ item.analysis.pid_term_analysis | tojson(indent=2) }}</pre>
+<h2>Segment-gated analysis</h2><pre>{{ item.analysis.segment_gated_analysis | tojson(indent=2) }}</pre>
+<h2>Propwash analysis</h2><pre>{{ item.analysis.propwash_analysis | tojson(indent=2) }}</pre>
 <h2>Ranges</h2><pre>{{ item.analysis.ranges | tojson(indent=2) }}</pre>
 {% endblock %}

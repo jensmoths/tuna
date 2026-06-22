@@ -102,7 +102,7 @@ def _add_analysis_commands(top: argparse._SubParsersAction[argparse.ArgumentPars
     _add_json(summary)
     segment_rows = sub.add_parser("segment-rows")
     segment_rows.add_argument("--log-id", type=int, required=True)
-    segment_rows.add_argument("--segment-kind", required=True, choices=["high_rate", "throttle_punch", "chirp"])
+    segment_rows.add_argument("--segment-kind", required=True, choices=["high_rate", "throttle_punch", "throttle_chop", "propwash", "chirp"])
     segment_rows.add_argument("--segment-index", type=int, required=True)
     segment_rows.add_argument("--fields", help="comma-separated decoded CSV fields to return")
     segment_rows.add_argument("--pad-rows", type=int, default=0)
@@ -117,11 +117,15 @@ def _add_analysis_commands(top: argparse._SubParsersAction[argparse.ArgumentPars
     compare.add_argument("--before-log-id", type=int, required=True)
     compare.add_argument("--after-log-id", type=int, required=True)
     _add_json(compare)
-    for name in ("throttle-chop", "cross-axis-flip"):
+    for name in ("throttle-chop", "cross-axis-flip", "noise-peaks", "propwash"):
         event_parser = sub.add_parser(name)
         event_parser.add_argument("--log-id", type=int, required=True)
         event_parser.add_argument("--limit", type=int, default=5)
         _add_json(event_parser)
+    for name in ("filter-evidence", "pid-response", "rpm-filter", "capture-plan"):
+        evidence_parser = sub.add_parser(name)
+        evidence_parser.add_argument("--log-id", type=int, required=True)
+        _add_json(evidence_parser)
 
 
 def _add_workflow_commands(top: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:

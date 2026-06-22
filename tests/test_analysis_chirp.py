@@ -74,6 +74,28 @@ class ChirpAnalysisTests(AnalysisTestCase):
         self.assertEqual(chirp["reason"], "missing_fields")
         self.assertIn("Missing CHIRP debug fields", chirp["warnings"][0])
 
+    def test_analyze_csv_log_does_not_treat_generic_debug_fields_as_chirp(self):
+        path = self.root / "generic-debug.csv"
+        fieldnames = [
+            "time",
+            "gyroADC[0]", "gyroADC[1]", "gyroADC[2]",
+            "setpoint[0]", "setpoint[1]", "setpoint[2]",
+            "debug[0]", "debug[1]", "debug[2]", "debug[3]",
+            "motor[0]",
+        ]
+        with path.open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            for index in range(100):
+                writer.writerow({name: 0 for name in fieldnames} | {"time": index * 1000, "debug[1]": index % 3, "motor[0]": 1200})
+
+        summary = analyze_csv_log(path)
+
+        chirp = summary["chirp_analysis"]
+        self.assertFalse(chirp["available"])
+        self.assertEqual(chirp["reason"], "debug_mode_not_chirp")
+        self.assertEqual(summary["segments"]["chirp"], [])
+
     def test_service_returns_chirp_segment_rows_from_latest_analysis(self):
         conn = connect(self.root / "tune.sqlite3")
         init_db(conn)

@@ -58,6 +58,34 @@ class AnalysisQualityTests(AnalysisTestCase):
         self.assertEqual(summary["flight"]["detected_active_rows"], 3)
         self.assertEqual(summary["flight"]["detection_methods"], ["motor_or_throttle_activity"])
 
+    def test_analyze_csv_log_reports_active_only_metrics(self):
+        path = self.root / "active-metrics.csv"
+        fieldnames = ["time", "gyroADC[0]", "gyroADC[1]", "gyroADC[2]", "setpoint[0]", "setpoint[1]", "setpoint[2]", "motor[0]", "axisP[0]", "axisI[0]", "axisD[0]", "rcCommand[3]"]
+        with path.open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            for index in range(100):
+                active = index >= 50
+                idle_noise = 100 if index % 2 else -100
+                active_gyro = 5 if index % 2 else 0
+                writer.writerow(
+                    {name: 0 for name in fieldnames}
+                    | {
+                        "time": index * 1000,
+                        "gyroADC[0]": active_gyro if active else idle_noise,
+                        "motor[0]": 1200 if active else 1000,
+                        "rcCommand[3]": 1200 if active else 1000,
+                    }
+                )
+
+        summary = analyze_csv_log(path)
+
+        self.assertEqual(summary["active_analysis"]["samples"], 50)
+        self.assertLess(
+            summary["active_analysis"]["rough_noise"]["gyroADC[0]"]["mean_abs_delta"],
+            summary["rough_noise"]["gyroADC[0]"]["mean_abs_delta"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -287,9 +287,21 @@ class TuneCliTests(unittest.TestCase):
 
         compare = self.run_cli_json("analysis", "compare", "--before-log-id", str(before_log["log_id"]), "--after-log-id", str(after_log["log_id"]))
         self.assertIn("pid_term_changes", compare)
+        self.assertIn("step_response_changes", compare)
+        self.assertIn("filter_changes", compare)
+        self.assertIn("propwash_changes", compare)
+        self.assertIn("outcome_summary", compare)
+        self.assertIn(compare["outcome_summary"]["classification"], {"improved", "worse", "mixed", "inconclusive"})
         chop = self.run_cli_json("analysis", "throttle-chop", "--log-id", str(after_log["log_id"]), "--limit", "1")
         self.assertEqual(chop["returned_event_count"], 1)
         self.assertEqual(len(chop["segments"]), 1)
+        self.assertIn("filter_diagnosis", self.run_cli_json("analysis", "filter-evidence", "--log-id", str(after_log["log_id"])))
+        self.assertIn("pid_response", self.run_cli_json("analysis", "pid-response", "--log-id", str(after_log["log_id"])))
+        self.assertIn("noise_peaks", self.run_cli_json("analysis", "noise-peaks", "--log-id", str(after_log["log_id"]), "--limit", "1"))
+        self.assertIn("rpm_analysis", self.run_cli_json("analysis", "rpm-filter", "--log-id", str(after_log["log_id"])))
+        self.assertIn("need_more_data", self.run_cli_json("analysis", "capture-plan", "--log-id", str(after_log["log_id"])))
+        propwash = self.run_cli_json("analysis", "propwash", "--log-id", str(after_log["log_id"]), "--limit", "1")
+        self.assertEqual(propwash["returned_event_count"], 0)
 
     def test_log_decode_analyze_runs_in_sequence(self):
         self.run_cli_json("db", "init")

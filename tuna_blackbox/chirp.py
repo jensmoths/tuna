@@ -31,6 +31,7 @@ def summarize_chirp_analysis(
     ]
     debug_mode = settings.get("debug_mode")
     debug_mode_looks_chirp = debug_mode in ("CHIRP", "chirp", 97, "97")
+    has_chirp_settings = any(str(key).startswith("chirp_") for key in settings)
 
     if missing_debug or missing_signals:
         reason = "missing_fields"
@@ -48,8 +49,20 @@ def summarize_chirp_analysis(
             "warnings": warnings,
         }
 
-    if debug_mode is not None and not debug_mode_looks_chirp:
-        warnings.append(f"Log header debug_mode is {debug_mode!r}; expected CHIRP or numeric index 97 for supported firmware")
+    if not debug_mode_looks_chirp and not has_chirp_settings:
+        if debug_mode is not None:
+            warnings.append(f"Log header debug_mode is {debug_mode!r}; expected CHIRP or numeric index 97 for supported firmware")
+        else:
+            warnings.append("Missing CHIRP debug_mode or chirp_* settings; debug fields may belong to another debug mode")
+        return {
+            "available": False,
+            "reason": "debug_mode_not_chirp",
+            "debug_mode": debug_mode,
+            "fields_present": {"debug": True, "setpoint_gyro": True},
+            "segments": [],
+            "axes": {},
+            "warnings": warnings,
+        }
 
     segments = _find_segments(chirp_rows, csv_path)
     if not segments:

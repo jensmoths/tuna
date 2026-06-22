@@ -172,14 +172,34 @@ PIDtoolbox is known for spectral analysis and frequency-vs-throttle views. Tuna 
 
 - Implemented: rough time-domain noise proxies for gyro, unfiltered gyro, and D-term using sample-to-sample absolute deltas.
 - Implemented: per-segment rough gyro/D-term noise for high-rate segments.
+- Implemented: active-flight-only rough noise, spectrum, filter, motor, PID, and step-response summaries.
 - Implemented: first-pass FFT spectrum summaries for gyro, unfiltered gyro, D-term, motor, and debug fields.
 - Implemented: first-pass frequency-vs-throttle heatmap JSON for gyro, unfiltered gyro, D-term, motor, and debug fields.
+- Implemented: windowed frequency-vs-throttle heatmap JSON using contiguous windows and mean throttle per window.
 - Implemented: filter attenuation estimates comparing filtered gyro vs unfiltered gyro by frequency band.
 - Implemented: first-pass RPM harmonic detection from debug-field spectral peaks.
 - Implemented: first-pass step response and time-domain setpoint response summaries.
 - Implemented: first-pass motor output, saturation, throttle-bin, and imbalance summaries.
 - Implemented: first-pass PID term, D-term spike, I-term windup, feedforward, and P/D balance summaries.
-- Not implemented yet: dynamic notch/RPM filter effectiveness summaries.
+- Implemented: first-pass evidence-only filter/PID classifications, propwash recovery windows, segment-gated summaries, and capture-plan recommendations.
+- Not implemented yet: full debug-mode-specific dynamic notch/RPM filter effectiveness summaries.
+
+## Implemented twelfth pass
+
+- Added `active_analysis` with active-flight-only metrics so idle/ground rows do not dominate noise/filter/PID evidence.
+- Added `windowed_frequency_throttle_heatmap`, preserving the older concatenated heatmap while providing contiguous-window throttle/frequency evidence.
+- Added `propwash_analysis` for first-pass throttle-recovery/propwash windows.
+- Added `segment_gated_analysis` for clean high-rate segment summaries excluding motor-saturated segments.
+- Added `tuning_evidence` containing evidence-only filter classifications, PID response classifications, and capture-plan recommendations.
+- Expanded `analysis compare` with step-response, filter, noise, RPM/filter, propwash, chirp, and evidence classification deltas.
+- Added compact `tuna-core analysis` views: `filter-evidence`, `pid-response`, `noise-peaks`, `rpm-filter`, `propwash`, and `capture-plan`.
+
+## Implemented thirteenth pass
+
+- Added standalone `tuna-blackbox` compact evidence views for decoded CSV inputs: `filter-evidence`, `pid-response`, `noise-peaks`, `rpm-filter`, `propwash`, and `capture-plan`.
+- Added first-pass before/after `outcome_summary` classification (`improved`, `worse`, `mixed`, or `inconclusive`) based on lower-is-better response/noise/saturation metrics.
+- Added debug-mode-family labeling and first-pass RPM/filter residual harmonic evidence for RPM/filter debug modes while keeping CHIRP logs separate.
+- Real-log validation tightened CHIRP gating so generic debug fields no longer create false CHIRP segments, added capture-plan warnings for unknown debug mode, and reports conflicting filter evidence as `mixed_filter_evidence`.
 
 ## Implemented chirp analysis MVP
 

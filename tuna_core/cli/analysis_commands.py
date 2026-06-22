@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from tuna_blackbox.analysis_views import compare_analyses, limited_events
+from tuna_blackbox.analysis_views import capture_plan_view, compare_analyses, filter_evidence_view, limited_events, noise_peak_view, pid_response_view, propwash_view, rpm_filter_view
 from tuna_core.cli.output import emit, emit_command_error, print_json, require_row
 from tuna_core.services.analysis import analyze_imported_log, decode_imported_log, latest_analysis, list_recordings
 from tuna_core.services.segment_rows import get_segment_rows
@@ -101,8 +101,12 @@ def _analysis_summary_payload(conn: Any, log_id: int) -> dict[str, Any]:
         "segment_examples": segment_examples,
         "pid_term_analysis": analysis.get("pid_term_analysis"),
         "motor_analysis": analysis.get("motor_analysis"),
+        "filter_diagnosis": (analysis.get("tuning_evidence") or {}).get("filter_diagnosis") if isinstance(analysis.get("tuning_evidence"), dict) else None,
+        "pid_response": (analysis.get("tuning_evidence") or {}).get("pid_response") if isinstance(analysis.get("tuning_evidence"), dict) else None,
+        "capture_plan": (analysis.get("tuning_evidence") or {}).get("capture_plan") if isinstance(analysis.get("tuning_evidence"), dict) else None,
         "throttle_chop_analysis": limited_events(analysis.get("throttle_chop_analysis", {}), "segments", 3),
         "cross_axis_flip_analysis": limited_events(analysis.get("cross_axis_flip_analysis", {}), "segments", 3),
+        "propwash_analysis": limited_events(analysis.get("propwash_analysis", {}), "segments", 3),
         "chirp_analysis": analysis.get("chirp_analysis"),
     }
 
@@ -207,12 +211,37 @@ def _handle_view_commands(conn: Any, args: Any) -> int | None:
 
 
 def _handle_event_commands(conn: Any, args: Any) -> int | None:
-    if args.action in {"throttle-chop", "cross-axis-flip"}:
-        key = "throttle_chop_analysis" if args.action == "throttle-chop" else "cross_axis_flip_analysis"
+    if args.action in {"throttle-chop", "cross-axis-flip", "noise-peaks", "propwash"}:
+        key_by_action = {
+            "throttle-chop": "throttle_chop_analysis",
+            "cross-axis-flip": "cross_axis_flip_analysis",
+        }
+        key = key_by_action.get(args.action)
         warning = f"Analysis does not include {args.action} data"
         try:
             analysis_id, analyzed_at, analysis = latest_analysis(conn, args.log_id)
-            payload = limited_events(analysis.get(key, {"available": False, "warnings": [warning]}), "segments", args.limit)
+            if args.action == "noise-peaks":
+                payload = noise_peak_view(analysis, limit=args.limit)
+            elif args.action == "propwash":
+                payload = propwash_view(analysis, limit=args.limit)
+            else:
+                payload = limited_events(analysis.get(key, {"available": False, "warnings": [warning]}), "segments", args.limit)
+            payload.update({"log_id": args.log_id, "analysis_id": analysis_id, "analyzed_at": analyzed_at})
+        except (json.JSONDecodeError, ValueError) as exc:
+            emit_command_error(exc, args.json)
+            return 1
+        print_json(payload)
+    elif args.action in {"filter-evidence", "pid-response", "rpm-filter", "capture-plan"}:
+        try:
+            analysis_id, analyzed_at, analysis = latest_analysis(conn, args.log_id)
+            if args.action == "filter-evidence":
+                payload = filter_evidence_view(analysis)
+            elif args.action == "pid-response":
+                payload = pid_response_view(analysis)
+            elif args.action == "rpm-filter":
+                payload = rpm_filter_view(analysis)
+            else:
+                payload = capture_plan_view(analysis)
             payload.update({"log_id": args.log_id, "analysis_id": analysis_id, "analyzed_at": analyzed_at})
         except (json.JSONDecodeError, ValueError) as exc:
             emit_command_error(exc, args.json)

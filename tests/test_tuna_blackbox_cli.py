@@ -49,6 +49,28 @@ class TunaBlackboxCliTests(unittest.TestCase):
         self.assertEqual(result["csv_path"], str(csv_path))
         decode.assert_called_once()
 
+    def test_compact_evidence_views_work_without_tuna_db(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path = Path(tmp) / "flight.csv"
+            csv_path.write_text(
+                "time,gyroADC[0],gyroADC[1],gyroADC[2],gyroUnfilt[0],gyroUnfilt[1],gyroUnfilt[2],setpoint[0],setpoint[1],setpoint[2],motor[0],axisP[0],axisI[0],axisD[0],rcCommand[3]\n"
+                "0,0,0,0,0,0,0,0,0,0,1000,1,1,1,1200\n"
+                "1000,10,0,0,20,0,0,0,0,0,1200,1,1,5,1200\n"
+                "2000,20,0,0,40,0,0,250,0,0,1200,1,1,10,1200\n"
+            )
+            code, filter_result = self.run_cli_json_with_code("filter-evidence", str(csv_path))
+            _, pid_result = self.run_cli_json_with_code("pid-response", str(csv_path))
+            _, capture_result = self.run_cli_json_with_code("capture-plan", str(csv_path))
+            _, noise_result = self.run_cli_json_with_code("noise-peaks", str(csv_path), "--limit", "1")
+            _, propwash_result = self.run_cli_json_with_code("propwash", str(csv_path), "--limit", "1")
+
+        self.assertEqual(code, 0)
+        self.assertIn("filter_diagnosis", filter_result)
+        self.assertIn("pid_response", pid_result)
+        self.assertIn("need_more_data", capture_result)
+        self.assertIn("noise_peaks", noise_result)
+        self.assertIn("segments", propwash_result)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -27,15 +27,19 @@ from .analysis_summary import tracking_summary as _tracking_summary
 from .analysis_views import config_snapshot as _config_snapshot
 from .capabilities import summarize_analysis_capabilities as _analysis_capabilities
 from .chirp import summarize_chirp_analysis as _summarize_chirp_analysis
-from .common import AXES, MIN_USEFUL_DURATION_SECONDS, to_float as _to_float, truthy_field as _truthy_field
+from .common import AXES, MIN_USEFUL_DURATION_SECONDS, SPECTRAL_PREFIXES, to_float as _to_float, truthy_field as _truthy_field
+from .evidence import build_tuning_evidence as _build_tuning_evidence
+from .evidence import summarize_segment_gated_analysis as _summarize_segment_gated_analysis
 from .filters import summarize_filter_analysis as _summarize_filter_analysis
+from .maneuvers import summarize_propwash_analysis as _summarize_propwash_analysis
 from .motors import summarize_motor_analysis as _summarize_motor_analysis
 from .pid_terms import summarize_pid_term_analysis as _summarize_pid_term_analysis
 from .spectrum import (
     summarize_frequency_throttle_heatmap as _summarize_frequency_throttle_heatmap,
     summarize_noise_peaks as _summarize_noise_peaks,
-    summarize_rpm_analysis as _summarize_rpm_analysis,
     summarize_spectrum as _summarize_spectrum,
+    summarize_rpm_analysis as _summarize_rpm_analysis,
+    summarize_windowed_frequency_throttle_heatmap as _summarize_windowed_frequency_throttle_heatmap,
 )
 from .step_response import summarize_step_response as _summarize_step_response
 from .timing import summarize_timing as _summarize_timing
@@ -88,6 +92,7 @@ class BlackboxAnalysisAccumulator:
     non_monotonic_time_samples: int = 0
     spectral_values: dict[str, list[float]] = field(default_factory=dict)
     heatmap_values: dict[str, dict[str, list[float]]] = field(default_factory=dict)
+    throttle_spectral_series: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
     armed_segments: list[dict[str, Any]] = field(default_factory=list)
     armed_builder: dict[str, Any] | None = None
     detected_active_rows: int = 0
@@ -100,6 +105,18 @@ class BlackboxAnalysisAccumulator:
     throttle_chop_segments: list[dict[str, Any]] = field(default_factory=list)
     throttle_chop_builder: dict[str, Any] | None = None
     previous_throttle_for_chop: float | None = None
+    maneuver_samples: list[dict[str, Any]] = field(default_factory=list)
+    active_sample_count: int = 0
+    active_spectral_values: dict[str, list[float]] = field(default_factory=dict)
+    active_heatmap_values: dict[str, dict[str, list[float]]] = field(default_factory=dict)
+    active_throttle_spectral_series: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
+    active_motor_values: dict[str, list[float]] = field(default_factory=dict)
+    active_motor_throttle_bins: dict[str, dict[str, list[float]]] = field(default_factory=dict)
+    active_pid_samples: dict[str, list[Any]] = field(default_factory=_axis_lists)
+    active_step_response_samples: dict[str, list[Any]] = field(default_factory=_axis_lists)
+    active_previous_values: dict[str, float] = field(default_factory=dict)
+    active_rough_noise_acc: dict[str, dict[str, float | int]] = field(default_factory=dict)
+    saw_inactive_row: bool = False
 
     def process_row(self, row: dict[str, str], *, max_rows: int | None = None) -> bool:
         self.row_count += 1
@@ -144,6 +161,15 @@ class BlackboxAnalysisAccumulator:
         _add_timing_gaps(timing, self.time_intervals, self.non_monotonic_time_samples)
         spectrum = _summarize_spectrum(self.spectral_values, timing["nominal_logging_rate_hz"])
         step_response = _summarize_step_response(self.step_response_samples)
+        full_log_is_active = self.active_sample_count == self.row_count
+        active_spectrum = spectrum if full_log_is_active else _summarize_spectrum(self.active_spectral_values, timing["nominal_logging_rate_hz"])
+        active_step_response = step_response if full_log_is_active else _summarize_step_response(self.active_step_response_samples)
+        heatmap = _summarize_frequency_throttle_heatmap(self.heatmap_values, timing["nominal_logging_rate_hz"], "rcCommand[3]" in self.fields)
+        windowed_heatmap = _summarize_windowed_frequency_throttle_heatmap(self.throttle_spectral_series, timing["nominal_logging_rate_hz"], "rcCommand[3]" in self.fields)
+        filter_analysis = _summarize_filter_analysis(self.spectral_values, timing["nominal_logging_rate_hz"])
+        motor_analysis = _summarize_motor_analysis(self.motor_values, self.motor_throttle_bins)
+        pid_term_analysis = _summarize_pid_term_analysis(self.pid_samples, step_response)
+        rough_noise = _rough_noise_summary(self.rough_noise_acc)
         chirp_analysis = _summarize_chirp_analysis(
             self.chirp_rows,
             self.fields,
@@ -161,7 +187,8 @@ class BlackboxAnalysisAccumulator:
             timing=timing,
             non_monotonic_time_samples=self.non_monotonic_time_samples,
         )
-        return {
+        propwash_analysis = _summarize_propwash_analysis(self.maneuver_samples, self.fields, self.csv_path)
+        summary = {
             "csv_path": str(self.csv_path),
             "row_count": self.row_count,
             "fields": self.fields,
@@ -196,26 +223,44 @@ class BlackboxAnalysisAccumulator:
             "analysis_capabilities": _analysis_capabilities(self.fields, timing),
             "timing": timing,
             "tracking": _tracking_summary(self.tracking_acc),
-            "rough_noise": _rough_noise_summary(self.rough_noise_acc),
+            "rough_noise": rough_noise,
             "spectrum": spectrum,
-            "frequency_throttle_heatmap": _summarize_frequency_throttle_heatmap(self.heatmap_values, timing["nominal_logging_rate_hz"], "rcCommand[3]" in self.fields),
-            "filter_analysis": _summarize_filter_analysis(self.spectral_values, timing["nominal_logging_rate_hz"]),
+            "frequency_throttle_heatmap": heatmap,
+            "windowed_frequency_throttle_heatmap": windowed_heatmap,
+            "filter_analysis": filter_analysis,
             "noise_peaks": _summarize_noise_peaks(spectrum),
-            "rpm_analysis": _summarize_rpm_analysis(spectrum),
+            "rpm_analysis": _summarize_rpm_analysis(spectrum, self.blackbox_settings),
             "step_response": step_response,
-            "motor_analysis": _summarize_motor_analysis(self.motor_values, self.motor_throttle_bins),
-            "pid_term_analysis": _summarize_pid_term_analysis(self.pid_samples, step_response),
+            "motor_analysis": motor_analysis,
+            "pid_term_analysis": pid_term_analysis,
+            "active_analysis": {
+                "samples": self.active_sample_count,
+                "rough_noise": rough_noise if full_log_is_active else _rough_noise_summary(self.active_rough_noise_acc),
+                "spectrum": active_spectrum,
+                "frequency_throttle_heatmap": heatmap if full_log_is_active else _summarize_frequency_throttle_heatmap(self.active_heatmap_values, timing["nominal_logging_rate_hz"], "rcCommand[3]" in self.fields),
+                "windowed_frequency_throttle_heatmap": windowed_heatmap if full_log_is_active else _summarize_windowed_frequency_throttle_heatmap(self.active_throttle_spectral_series, timing["nominal_logging_rate_hz"], "rcCommand[3]" in self.fields),
+                "filter_analysis": filter_analysis if full_log_is_active else _summarize_filter_analysis(self.active_spectral_values, timing["nominal_logging_rate_hz"]),
+                "noise_peaks": _summarize_noise_peaks(active_spectrum),
+                "step_response": active_step_response,
+                "motor_analysis": motor_analysis if full_log_is_active else _summarize_motor_analysis(self.active_motor_values, self.active_motor_throttle_bins),
+                "pid_term_analysis": pid_term_analysis if full_log_is_active else _summarize_pid_term_analysis(self.active_pid_samples, active_step_response),
+            },
             "chirp_analysis": chirp_analysis,
             "throttle_chop_analysis": _throttle_chop_analysis(throttle_chop_segments, self.fields),
             "cross_axis_flip_analysis": _cross_axis_flip_analysis(high_rate_segments),
+            "propwash_analysis": propwash_analysis,
+            "segment_gated_analysis": _summarize_segment_gated_analysis(high_rate_segments),
             "segments": {
                 "high_rate": high_rate_segments,
                 "throttle_punch": throttle_segments,
                 "throttle_chop": throttle_chop_segments,
+                "propwash": propwash_analysis.get("segments", []),
                 "chirp": chirp_analysis.get("segments", []),
             },
             "warnings": self.warnings,
         }
+        summary["tuning_evidence"] = _build_tuning_evidence(summary)
+        return summary
 
     def _record_timing(self, time_value: float | None) -> None:
         if time_value is None:
@@ -254,6 +299,8 @@ class BlackboxAnalysisAccumulator:
         if detection_method is not None:
             self.detected_active_rows += 1
             self.active_detection_methods.add(detection_method)
+        else:
+            self.saw_inactive_row = True
         self.throttle_chop_builder = _update_throttle_chop_builder(
             time_value=time_value,
             row_count=self.row_count,
@@ -271,6 +318,7 @@ class BlackboxAnalysisAccumulator:
             heatmap_values=self.heatmap_values,
             motor_throttle_bins=self.motor_throttle_bins,
         )
+        self._record_windowed_heatmap_series(throttle, numeric, self.throttle_spectral_series)
         _record_axis_samples(
             time_value=time_value,
             throttle=throttle,
@@ -290,6 +338,9 @@ class BlackboxAnalysisAccumulator:
         chirp_row = _chirp_row(self.row_count, time_value, numeric, saturated_this_row)
         if chirp_row is not None:
             self.chirp_rows.append(chirp_row)
+        self._record_maneuver_sample(time_value, throttle, numeric, saturated_this_row)
+        if detection_method is not None:
+            self._record_active_row(time_value, throttle, numeric, record_windowed=self.saw_inactive_row)
         self.throttle_builder = _update_throttle_punch_builder(
             time_value=time_value,
             row_count=self.row_count,
@@ -310,6 +361,59 @@ class BlackboxAnalysisAccumulator:
         if self.armed_builder is not None:
             self.armed_segments.append(self.armed_builder)
 
+    def _record_windowed_heatmap_series(self, throttle: float | None, numeric: dict[str, float], target: dict[str, list[tuple[float, float]]]) -> None:
+        if throttle is None:
+            return
+        for name, value in numeric.items():
+            if name.startswith(SPECTRAL_PREFIXES):
+                target.setdefault(name, []).append((throttle, value))
+
+    def _record_active_row(self, time_value: float, throttle: float | None, numeric: dict[str, float], *, record_windowed: bool) -> None:
+        self.active_sample_count += 1
+        self._record_subset_numeric(numeric)
+        if record_windowed:
+            _record_throttle_bins(
+                throttle,
+                numeric,
+                heatmap_values=self.active_heatmap_values,
+                motor_throttle_bins=self.active_motor_throttle_bins,
+            )
+            self._record_windowed_heatmap_series(throttle, numeric, self.active_throttle_spectral_series)
+        _record_axis_samples(
+            time_value=time_value,
+            throttle=throttle,
+            numeric=numeric,
+            step_response_samples=self.active_step_response_samples,
+            pid_samples=self.active_pid_samples,
+        )
+
+    def _record_subset_numeric(self, numeric: dict[str, float]) -> None:
+        for name, value in numeric.items():
+            if name.startswith(SPECTRAL_PREFIXES):
+                self.active_spectral_values.setdefault(name, []).append(value)
+            if name.startswith("motor["):
+                self.active_motor_values.setdefault(name, []).append(value)
+            if name.startswith(("gyroADC[", "gyroUnfilt[", "axisD[")):
+                previous = self.active_previous_values.get(name)
+                if previous is not None:
+                    delta = abs(value - previous)
+                    acc = self.active_rough_noise_acc.setdefault(name, {"samples": 0, "sum_abs_delta": 0.0, "max_abs_delta": 0.0})
+                    acc["samples"] = int(acc["samples"]) + 1
+                    acc["sum_abs_delta"] = float(acc["sum_abs_delta"]) + delta
+                    acc["max_abs_delta"] = max(float(acc["max_abs_delta"]), delta)
+                self.active_previous_values[name] = value
+
+    def _record_maneuver_sample(self, time_value: float, throttle: float | None, numeric: dict[str, float], saturated_this_row: bool) -> None:
+        self.maneuver_samples.append({
+            "row": self.row_count,
+            "time_us": time_value,
+            "throttle": throttle,
+            "motor_saturated": saturated_this_row,
+            "gyro": {axis: numeric.get(f"gyroADC[{index}]") for index, axis in AXES.items()},
+            "setpoint": {axis: numeric.get(f"setpoint[{index}]") for index, axis in AXES.items()},
+            "D": {axis: numeric.get(f"axisD[{index}]") for index, axis in AXES.items()},
+        })
+
     def _add_missing_field_warnings(self) -> None:
         required = ["time", "gyroADC[0]", "gyroADC[1]", "gyroADC[2]", "setpoint[0]", "setpoint[1]", "setpoint[2]"]
         missing = [name for name in required if name not in self.fields]
@@ -320,4 +424,3 @@ class BlackboxAnalysisAccumulator:
         if self.first_time is None or self.last_time is None or self.last_time < self.first_time:
             return None
         return (self.last_time - self.first_time) / 1_000_000.0
-
