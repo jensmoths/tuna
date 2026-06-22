@@ -135,6 +135,27 @@ class PiRpcSupervisor:
         selected_model = pi_model or session.get("pi_model") or "gpt-5.4-mini"
         selected_thinking = thinking_level or session.get("thinking_level") or "medium"
         self._append_debug_trace(loop_id, "continuing Pi RPC Tuning Agent session after interruption")
+        prompt_message = self._continue_prompt(
+            self._sessions.load_loop(loop_id),
+            selected_bridge_host,
+            fc_connection=selected_connection,
+            usb_device=selected_usb_device,
+        )
+        with self._lock:
+            process = self._processes.get(loop_id)
+        if process is not None and process.poll() is None:
+            command_type = "prompt" if session.get("status") == "Idle" else "follow_up"
+            self._send(process, {"type": command_type, "message": prompt_message}, loop_id=loop_id)
+            self._set_session(
+                loop_id,
+                status="Inspecting Tuna state",
+                bridge_host=selected_bridge_host,
+                fc_connection=selected_connection,
+                usb_device=selected_usb_device,
+                pi_model=selected_model,
+                thinking_level=selected_thinking,
+            )
+            return
         self.start_loop(
             loop_id,
             bridge_host=selected_bridge_host,
@@ -142,7 +163,7 @@ class PiRpcSupervisor:
             usb_device=selected_usb_device,
             pi_model=selected_model,
             thinking_level=selected_thinking,
-            prompt_message=self._continue_prompt(self._sessions.load_loop(loop_id), selected_bridge_host, fc_connection=selected_connection, usb_device=selected_usb_device),
+            prompt_message=prompt_message,
         )
 
     def abort_loop(self, loop_id: int) -> None:

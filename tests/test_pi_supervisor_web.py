@@ -251,6 +251,49 @@ class PiSupervisorWebTests(unittest.TestCase):
         self.assertEqual(session["process_id"], 5678)
         self.assertIn("continuing Pi RPC Tuning Agent session", session["debug_trace"])
 
+    def test_continuing_idle_running_pi_rpc_reuses_existing_process(self):
+        build_id = create_build(self.conn, "5 inch")
+        loop_id = create_loop(self.conn, build_id, "baseline")
+
+        class FakeProcess:
+            pid = 5678
+
+            def __init__(self):
+                self.stdin = StringIO()
+
+            def poll(self):
+                return None
+
+        fake_process = FakeProcess()
+        app = create_app(self.db_path)
+        supervisor = app.extensions.setdefault("tuna_pi_supervisor", PiRpcSupervisor(self.db_path, cwd=self.root))
+        supervisor._set_session(
+            loop_id,
+            status="Idle",
+            bridge_host="tuna-bridge-usb",
+            pi_model="gpt-5.5",
+            thinking_level="high",
+            process_id=5678,
+            pi_session_file="saved-pi-session.jsonl",
+        )
+        supervisor._processes[loop_id] = fake_process
+
+        with patch("tuna_console.web.pi_supervisor.subprocess.Popen") as popen:
+            response = app.test_client().post(
+                f"/loops/{loop_id}/tuning-agent/continue",
+                data={"bridge_host": "tuna-bridge-usb", "pi_model": "gpt-5.5", "thinking_level": "high"},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        popen.assert_not_called()
+        sent = fake_process.stdin.getvalue()
+        self.assertIn('"type": "prompt"', sent)
+        self.assertIn("Continue acting as the Tuna Tuning Agent", sent)
+        session = self.conn.execute("SELECT status, process_id, debug_trace FROM tuning_agent_sessions WHERE loop_id = ?", (loop_id,)).fetchone()
+        self.assertEqual(session["status"], "Inspecting Tuna state")
+        self.assertEqual(session["process_id"], 5678)
+        self.assertIn("continuing Pi RPC Tuning Agent session", session["debug_trace"])
+
     def test_loop_page_shows_continue_when_db_has_stale_process_id(self):
         build_id = create_build(self.conn, "5 inch")
         loop_id = create_loop(self.conn, build_id, "baseline")

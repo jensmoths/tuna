@@ -79,6 +79,7 @@ First:
 2. Check open and recently resolved Operator Tasks and Operator Notifications. If this continuation followed an Operator Task resolution, read that task with `task show --task-id <id> --json`.
 3. Resume the Loop decision process from durable Tuna state and the existing Pi session history.
 4. If a previous action was interrupted, verify state before retrying it.
+5. If `loop status` or `update pending-writes --json` shows approved pending writes, use `python3 -m tuna_core update pending-writes --json`, write through FCS with `python3 -m tuna_fcs.cli cli write ... --confirm write-fc-cli --json`, then record success with `python3 -m tuna_core update apply --update-id <id> --json`. Do not run `--help` for these standard commands unless a command fails.
 
 Preserve Tuna safety rules. Do not apply a Tune Update without Operator review.
 Use FCS, not raw Bridge protocol access, for flight-controller operations.

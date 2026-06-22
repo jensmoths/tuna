@@ -16,7 +16,7 @@ from tuna_core.services.iterations import complete_no_change, create_iteration
 from tuna_core.services.loops import create_loop
 from tuna_core.services.operator_notifications import create_blackbox_config_notification
 from tuna_core.services.operator_tasks import create_build_confirmation_task, create_flight_capture_task, create_task, create_tune_goal_task, resolve_task
-from tuna_core.services.tune_updates import propose_tune_update
+from tuna_core.services.tune_updates import approve_for_write, mark_applied, propose_tune_update
 from tuna_core.storage import connect, init_db
 from tuna_core.services.analysis import analyze_imported_log
 from tuna_console.web.app import create_app
@@ -371,6 +371,64 @@ class OperatorWebTests(unittest.TestCase):
         self.assertIn(b"Tuning Iteration", workbench.data)
         self.assertIn(b"No safe Tune Update yet", workbench.data)
         self.assertIn(b"Need a better follow-up Blackbox Log", workbench.data)
+
+    def test_workbench_shows_pending_write_as_next_action(self):
+        build_id = create_build(self.conn, "5 inch", fc_snapshot={"fc_variant": "BTFL"})
+        loop_id = create_loop(self.conn, build_id, "baseline")
+        iteration_id = create_iteration(self.conn, loop_id)
+        record_diagnosis(self.conn, iteration_id, "Try a small D increase", confidence="medium")
+        update_id = propose_tune_update(self.conn, iteration_id, build_id, {"d_pitch": 48}, cli_text="set d_pitch = 48")
+        task_id = create_task(
+            self.conn,
+            "review_tune_update",
+            "Review Tune Update",
+            body="Review the proposed absolute Tune Update before Tuning Agent write-back.",
+            payload={"tune_update_id": update_id},
+        )
+        approve_for_write(self.conn, update_id)
+        resolve_task(self.conn, task_id, {"decision": "approved_for_write", "safety_confirmed": True, "tune_update_id": update_id})
+
+        client = create_app(self.db_path).test_client()
+        page = client.get(f"/loops/{loop_id}/workbench")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Approved Tune Update waiting for write-back", page.data)
+        self.assertIn(b"Start Tuning Agent", page.data)
+        self.assertIn(b"Tune Update #1 is approved and waiting for Tuning Agent write-back.", page.data)
+        self.assertNotIn(b"wait for a live update or an Operator Task", page.data)
+
+    def test_workbench_shows_applied_update_and_continue_when_agent_idle(self):
+        build_id = create_build(self.conn, "5 inch", fc_snapshot={"fc_variant": "BTFL"})
+        loop_id = create_loop(self.conn, build_id, "baseline")
+        iteration_id = create_iteration(self.conn, loop_id)
+        record_diagnosis(self.conn, iteration_id, "Try a small D increase", confidence="medium")
+        update_id = propose_tune_update(self.conn, iteration_id, build_id, {"d_pitch": 48}, cli_text="set d_pitch = 48")
+        task_id = create_task(
+            self.conn,
+            "review_tune_update",
+            "Review Tune Update",
+            body="Review the proposed absolute Tune Update before Tuning Agent write-back.",
+            payload={"tune_update_id": update_id},
+        )
+        approve_for_write(self.conn, update_id)
+        resolve_task(self.conn, task_id, {"decision": "approved_for_write", "safety_confirmed": True, "tune_update_id": update_id})
+        mark_applied(self.conn, update_id)
+        self.conn.execute("INSERT INTO tuning_agent_sessions (loop_id, status) VALUES (?, ?)", (loop_id, "Idle"))
+        self.conn.commit()
+
+        class IdleRunningSupervisor:
+            def is_loop_running(self, requested_loop_id):
+                return requested_loop_id == loop_id
+
+        app = create_app(self.db_path)
+        app.extensions["tuna_pi_supervisor"] = IdleRunningSupervisor()
+        page = app.test_client().get(f"/loops/{loop_id}/workbench")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Tune Update applied", page.data)
+        self.assertIn(b"Continue Tuning Agent", page.data)
+        self.assertIn(b"Tune Update #", page.data)
+        self.assertNotIn(b"wait for a live update or an Operator Task", page.data)
 
     def test_loop_page_can_create_and_close_loop(self):
         build_id = create_build(self.conn, "5 inch", fc_snapshot={"fc_variant": "BTFL"})

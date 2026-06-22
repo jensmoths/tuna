@@ -8,6 +8,10 @@
 {% set primary_agent_label = 'Continue Tuning Agent' if can_resume_agent else 'Start Tuning Agent' %}
 {% set show_abort_agent = state.agent_process_running and 'idle' not in agent_status_lower %}
 {% set selected_connection = agent_session.fc_connection if agent_session and agent_session.fc_connection else default_fc_connection %}
+{% set latest_iteration = state.latest_iteration %}
+{% set latest_update_status = latest_iteration.tune_update_status if latest_iteration else '' %}
+{% set latest_result = latest_iteration.result if latest_iteration else '' %}
+{% set agent_ready = not agent_working and ('idle' in agent_status_lower or 'aborted' in agent_status_lower or not state.agent_process_running) %}
 <div class="agent-banner {% if agent_error %}agent-banner-error{% elif agent_working %}agent-banner-working{% endif %}">
   <div class="agent-banner-main">
     <span class="agent-indicator{% if agent_working %} agent-indicator-working{% endif %}" aria-hidden="true"></span>
@@ -61,10 +65,21 @@
         <p>No open Operator Task. The Tuning Agent is currently {{ agent_status }}.</p>
         <p><strong>Next action:</strong> wait for a live update or an Operator Task.</p>
         {% else %}
+        {% if state.pending_write_count %}
+        <h2>Approved Tune Update waiting for write-back</h2>
+        <p>Operator approval is recorded. The Tuning Agent must write the approved Tune Update through FCS and then record the result.</p>
+        {% elif latest_update_status == 'applied' %}
+        <h2>Tune Update applied</h2>
+        <p>The latest Tuning Iteration completed with an applied Tune Update. There are no open Operator Tasks.</p>
+        {% elif latest_result == 'no_change' %}
+        <h2>Tuning Iteration completed with no change</h2>
+        <p>The latest Tuning Iteration is complete and no Tune Update is waiting for Operator action.</p>
+        {% else %}
         <h2>No Operator action needed</h2>
         <p>No open Operator Task. The Operator Console will update this workbench when the Tuning Agent requests input.</p>
-        {% if not state.agent_process_running %}
-        <p><strong>Next action:</strong> {{ primary_agent_label }} when ready.</p>
+        {% endif %}
+        {% if agent_ready %}
+        <p><strong>Next action:</strong> {{ primary_agent_label }} when ready for the next Loop step.</p>
         <form class="agent-primary-action workbench-primary-action" method="post" action="/loops/{{ loop_id }}/tuning-agent/start">
           <input type="hidden" name="next" value="/loops/{{ loop_id }}/workbench">
           <input type="hidden" name="fc_connection" value="{{ selected_connection }}">

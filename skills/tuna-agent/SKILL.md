@@ -270,7 +270,9 @@ After approval, the Operator Console records `approved_pending_write`. Find appr
 python3 -m tuna_core update pending-writes --json
 ```
 
-For each pending write, verify state and FC identity, perform FCS write-back, then record success:
+For each pending write, verify state and FC identity, perform FCS write-back,
+then record success. These are standard commands; do not run `--help` for them
+unless one of the commands fails or the needed syntax is not shown here.
 
 ```bash
 python3 -m tuna_fcs.cli cli write \

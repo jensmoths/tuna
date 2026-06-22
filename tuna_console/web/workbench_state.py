@@ -22,9 +22,11 @@ def workbench_state(conn: Any, loop_id: int, agent_process_running: bool = False
     tasks = _loop_tasks(conn, loop_id)
     notifications = _loop_notifications(conn, loop_id)
     iterations = _loop_iterations(conn, loop_id)
+    latest_iteration = iterations[-1] if iterations else None
     events = _activity_events(agent_session, tasks, notifications, iterations)
     open_tasks = [task for task in tasks if task["status"] == "open"]
     open_notifications = [notification for notification in notifications if notification["status"] == "open"]
+    pending_write_count = _pending_write_count(conn, loop_id)
     return {
         "loop": loop,
         "agent_session": agent_session,
@@ -34,6 +36,8 @@ def workbench_state(conn: Any, loop_id: int, agent_process_running: bool = False
         "tasks": tasks,
         "notifications": notifications,
         "iterations": iterations,
+        "latest_iteration": latest_iteration,
+        "pending_write_count": pending_write_count,
         "current_task": open_tasks[0] if open_tasks else None,
         "open_notifications": open_notifications,
         "open_task_count": len(open_tasks),
@@ -97,6 +101,19 @@ def _loop_iterations(conn: Any, loop_id: int) -> list[dict[str, Any]]:
     return [_row_dict(row) for row in rows]
 
 
+def _pending_write_count(conn: Any, loop_id: int) -> int:
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM tune_updates u
+        JOIN tuning_iterations i ON i.id = u.iteration_id
+        WHERE i.loop_id = ? AND u.status = 'approved_pending_write'
+        """,
+        (loop_id,),
+    ).fetchone()
+    return int(row["count"]) if row else 0
+
+
 def _task_loop_id(conn: Any, task: dict[str, Any]) -> int | None:
     payload = task.get("payload") or {}
     loop_id = payload.get("loop_id")
@@ -147,7 +164,7 @@ def _iteration_events(iterations: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for iteration in iterations:
         status = iteration.get("result") or iteration.get("status")
         if iteration.get("tune_update_id"):
-            body = f"Tune Update #{iteration['tune_update_id']} is {iteration['tune_update_status']}."
+            body = _tune_update_activity_body(iteration["tune_update_id"], iteration.get("tune_update_status"))
         elif iteration.get("diagnosis_body"):
             body = str(iteration["diagnosis_body"])
         else:
@@ -167,6 +184,21 @@ def _iteration_events(iterations: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
         )
     return events
+
+
+def _tune_update_activity_body(update_id: object, status: object) -> str:
+    status_text = str(status or "")
+    if status_text == "proposed":
+        return f"Tune Update #{update_id} is waiting for Operator review."
+    if status_text == "approved_pending_write":
+        return f"Tune Update #{update_id} is approved and waiting for Tuning Agent write-back."
+    if status_text == "write_failed":
+        return f"Tune Update #{update_id} write-back failed and needs Tuning Agent follow-up."
+    if status_text == "applied":
+        return f"Tune Update #{update_id} was applied."
+    if status_text == "rejected":
+        return f"Tune Update #{update_id} was rejected by the Operator."
+    return f"Tune Update #{update_id} is {_humanize_token(status_text) or 'recorded'}."
 
 
 def _task_events(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
