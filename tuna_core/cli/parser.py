@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import os
 
+from tuna_core.services.analysis import ANALYSIS_FIXTURE_SCENARIOS
+
 
 def _env_default(name: str, fallback: str) -> str:
     return os.environ.get(name, fallback)
@@ -96,6 +98,14 @@ def _add_analysis_commands(top: argparse._SubParsersAction[argparse.ArgumentPars
     decode_analyze.add_argument("--output-json-file", help="write the full analysis JSON to a file and keep CLI JSON concise")
     decode_analyze.add_argument("--full-json", action="store_true", help="print the full analysis JSON to stdout")
     _add_json(decode_analyze)
+
+    fixture = sub.add_parser("record-fixture")
+    fixture.add_argument("--log-id", type=int, required=True)
+    fixture_source = fixture.add_mutually_exclusive_group(required=True)
+    fixture_source.add_argument("--analysis-json-file", help="record supplied analysis JSON for no-hardware workflow tests")
+    fixture_source.add_argument("--scenario", choices=ANALYSIS_FIXTURE_SCENARIOS, help="record a named fake analysis scenario for exploratory no-hardware workflow testing")
+    fixture.add_argument("--full-json", action="store_true", help="print the full analysis JSON to stdout")
+    _add_json(fixture)
 
     summary = sub.add_parser("summary")
     summary.add_argument("--log-id", type=int, required=True)

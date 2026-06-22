@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
@@ -52,6 +53,26 @@ class FcsWriteCliTests(unittest.TestCase):
 
         self.assertEqual(code, 1)
         self.assertEqual(result["error"]["kind"], "ValueError")
+        write.assert_not_called()
+
+    def test_fake_write_acknowledges_without_hardware(self):
+        with patch.dict(os.environ, {"TUNA_FCS_FAKE": "1"}, clear=False):
+            with patch("tuna_fcs.cli.write_betaflight_cli_text_to_bridge") as write:
+                code, result = self.run_cli_json_with_code(
+                    "cli",
+                    "write",
+                    "--bridge-host",
+                    "bench-bridge",
+                    "--command",
+                    "set d_roll = 42",
+                    "--confirm",
+                    "write-fc-cli",
+                )
+
+        self.assertEqual(code, 0)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["fixture"]["source"], "TUNA_FCS_FAKE")
+        self.assertIn("set d_roll = 42", result["transcript"])
         write.assert_not_called()
 
     def test_failed_write_returns_error(self):

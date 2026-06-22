@@ -21,7 +21,8 @@ def workbench_state(conn: Any, loop_id: int, agent_process_running: bool = False
     agent_session = _row_dict(conn.execute("SELECT * FROM tuning_agent_sessions WHERE loop_id = ?", (loop_id,)).fetchone())
     tasks = _loop_tasks(conn, loop_id)
     notifications = _loop_notifications(conn, loop_id)
-    events = _activity_events(agent_session, tasks, notifications)
+    iterations = _loop_iterations(conn, loop_id)
+    events = _activity_events(agent_session, tasks, notifications, iterations)
     open_tasks = [task for task in tasks if task["status"] == "open"]
     open_notifications = [notification for notification in notifications if notification["status"] == "open"]
     return {
@@ -32,6 +33,7 @@ def workbench_state(conn: Any, loop_id: int, agent_process_running: bool = False
         "builds": conn.execute("SELECT id, name FROM builds ORDER BY name, id").fetchall(),
         "tasks": tasks,
         "notifications": notifications,
+        "iterations": iterations,
         "current_task": open_tasks[0] if open_tasks else None,
         "open_notifications": open_notifications,
         "open_task_count": len(open_tasks),
@@ -75,6 +77,26 @@ def _loop_notifications(conn: Any, loop_id: int) -> list[dict[str, Any]]:
     return notifications
 
 
+def _loop_iterations(conn: Any, loop_id: int) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT
+          i.*,
+          d.body AS diagnosis_body,
+          d.confidence AS diagnosis_confidence,
+          u.id AS tune_update_id,
+          u.status AS tune_update_status
+        FROM tuning_iterations i
+        LEFT JOIN diagnoses d ON d.iteration_id = i.id
+        LEFT JOIN tune_updates u ON u.iteration_id = i.id
+        WHERE i.loop_id = ?
+        ORDER BY i.created_at, i.id
+        """,
+        (loop_id,),
+    ).fetchall()
+    return [_row_dict(row) for row in rows]
+
+
 def _task_loop_id(conn: Any, task: dict[str, Any]) -> int | None:
     payload = task.get("payload") or {}
     loop_id = payload.get("loop_id")
@@ -99,6 +121,7 @@ def _activity_events(
     agent_session: dict[str, Any] | None,
     tasks: list[dict[str, Any]],
     notifications: list[dict[str, Any]],
+    iterations: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     if agent_session:
@@ -114,7 +137,35 @@ def _activity_events(
         )
     events.extend(_task_events(tasks))
     events.extend(_notification_events(notifications))
+    events.extend(_iteration_events(iterations))
     events.sort(key=lambda event: (event.get("created_at") or "", event.get("title") or ""))
+    return events
+
+
+def _iteration_events(iterations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    events = []
+    for iteration in iterations:
+        status = iteration.get("result") or iteration.get("status")
+        if iteration.get("tune_update_id"):
+            body = f"Tune Update #{iteration['tune_update_id']} is {iteration['tune_update_status']}."
+        elif iteration.get("diagnosis_body"):
+            body = str(iteration["diagnosis_body"])
+        else:
+            body = "Tuning Iteration started."
+        no_change_reason = str(iteration.get("no_change_reason") or "").strip()
+        if no_change_reason:
+            body = f"{body} Reason: {no_change_reason}"
+        events.append(
+            {
+                "kind": "tuning_iteration",
+                "type_label": "Tuning Iteration",
+                "title": f"#{iteration['id']} {(_humanize_token(status) or 'open')}",
+                "body": body,
+                "created_at": iteration.get("completed_at") or iteration.get("created_at"),
+                "status": status,
+                "status_label": _humanize_token(status),
+            }
+        )
     return events
 
 

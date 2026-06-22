@@ -183,14 +183,18 @@ class PiRpcSupervisor:
                 if not session:
                     self._append_debug_trace(loop_id, "no stored Pi RPC session to resume for Operator Task resolution")
                     continue
-                self.start_loop(
-                    loop_id,
-                    bridge_host=session.get("bridge_host", ""),
-                    fc_connection=session.get("fc_connection", "bridge") or "bridge",
-                    usb_device=session.get("usb_device", ""),
-                    pi_model=session.get("pi_model") or "gpt-5.4-mini",
-                    thinking_level=session.get("thinking_level") or "medium",
-                )
+                try:
+                    self.start_loop(
+                        loop_id,
+                        bridge_host=session.get("bridge_host", ""),
+                        fc_connection=session.get("fc_connection", "bridge") or "bridge",
+                        usb_device=session.get("usb_device", ""),
+                        pi_model=session.get("pi_model") or "gpt-5.4-mini",
+                        thinking_level=session.get("thinking_level") or "medium",
+                    )
+                except OSError as exc:
+                    self._append_debug_trace(loop_id, f"failed to restart Pi RPC process for Operator Task resolution: {exc}")
+                    continue
                 with self._lock:
                     restarted = self._processes.get(loop_id)
                 if restarted is not None and restarted.poll() is None:

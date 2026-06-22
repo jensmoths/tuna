@@ -23,6 +23,7 @@ class TuneWorkflowTests(unittest.TestCase):
         init_db(self.conn)
 
     def tearDown(self):
+        self.conn.close()
         self.tmp.cleanup()
 
     def test_parse_blackbox_metadata_from_reference_log(self):

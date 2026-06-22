@@ -68,13 +68,25 @@ def _notification_item(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def _belongs_to_loop(payload: dict[str, Any], *, loop_id: int, build_id: int) -> bool:
+def _belongs_to_loop(conn: sqlite3.Connection, payload: dict[str, Any], *, loop_id: int, build_id: int) -> bool:
     if payload.get("loop_id") == loop_id:
         return True
     if payload.get("build_id") == build_id:
         return True
     if payload.get("candidate_build_id") == build_id:
         return True
+    update_id = payload.get("tune_update_id")
+    if update_id is not None:
+        row = conn.execute(
+            """
+            SELECT i.loop_id
+            FROM tune_updates u
+            JOIN tuning_iterations i ON i.id = u.iteration_id
+            WHERE u.id = ?
+            """,
+            (int(update_id),),
+        ).fetchone()
+        return row is not None and int(row["loop_id"]) == loop_id
     return False
 
 
@@ -148,7 +160,7 @@ def get_loop_context(conn: sqlite3.Connection, loop_id: int, *, recent_limit: in
     tasks = []
     for row in conn.execute("SELECT * FROM operator_tasks ORDER BY created_at DESC, id DESC LIMIT 50"):
         payload = _loads(row["payload_json"], {})
-        if _belongs_to_loop(payload, loop_id=loop_id, build_id=build_id):
+        if _belongs_to_loop(conn, payload, loop_id=loop_id, build_id=build_id):
             tasks.append(_task_item(row))
     open_tasks = [task for task in tasks if task["status"] == "open"]
     recent_tasks = [task for task in tasks if task["status"] != "open"][:recent_limit]
@@ -156,7 +168,7 @@ def get_loop_context(conn: sqlite3.Connection, loop_id: int, *, recent_limit: in
     notifications = []
     for row in conn.execute("SELECT * FROM operator_notifications ORDER BY created_at DESC, id DESC LIMIT 50"):
         payload = _loads(row["payload_json"], {})
-        if _belongs_to_loop(payload, loop_id=loop_id, build_id=build_id):
+        if _belongs_to_loop(conn, payload, loop_id=loop_id, build_id=build_id):
             notifications.append(_notification_item(row))
     open_notifications = [item for item in notifications if item["status"] == "open"]
     recent_notifications = [item for item in notifications if item["status"] != "open"][:recent_limit]

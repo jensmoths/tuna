@@ -28,6 +28,7 @@ class PiSupervisorWebTests(unittest.TestCase):
         init_db(self.conn)
 
     def tearDown(self):
+        self.conn.close()
         self.tmp.cleanup()
 
     def test_loop_page_starts_pi_rpc_tuning_agent(self):

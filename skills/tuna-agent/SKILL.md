@@ -245,6 +245,19 @@ Record the proposal:
 python3 -m tuna_core update propose --iteration-id 1 --build-id 1 --settings-json '{"d_pitch":48}' --cli-text 'set d_pitch = 48' --json
 ```
 
+After a successful proposal, immediately create the `review_tune_update`
+**Operator Task** for that **Tune Update**. Do not stop after `update propose`
+with only a prose reminder.
+
+```bash
+python3 -m tuna_core task create \
+  --kind review_tune_update \
+  --title "Review Tune Update" \
+  --body "Review the proposed absolute Tune Update before Tuning Agent write-back." \
+  --payload-json '{"tune_update_id":1}' \
+  --json
+```
+
 If recommending no change, record a **Diagnosis** explaining why and do not invent a **Tune Update**.
 
 ### 8. Operator review gate

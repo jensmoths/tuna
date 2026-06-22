@@ -31,6 +31,7 @@ class OperatorWebTests(unittest.TestCase):
         init_db(self.conn)
 
     def tearDown(self):
+        self.conn.close()
         self.tmp.cleanup()
 
     def test_review_task_approval_marks_update_pending_for_agent_write(self):
@@ -206,7 +207,9 @@ class OperatorWebTests(unittest.TestCase):
         self.assertIn(b'href="/workbench"', page.data)
         self.assertIn(b"Workbench Activity", page.data)
         self.assertIn(b"<dt>Loop</dt><dd>#", page.data)
-        self.assertIn(b"Loop workbench", client.get("/").data)
+        root = client.get("/")
+        self.assertEqual(root.status_code, 302)
+        self.assertEqual(root.headers["Location"], "/workbench")
         self.assertIn(b"Inspecting Tuna state", page.data)
         self.assertIn(b"Connect FCS", page.data)
         self.assertIn(b"Operator completed task. Notes: none.", page.data)
@@ -363,6 +366,11 @@ class OperatorWebTests(unittest.TestCase):
         self.assertIn(b"no change", detail.data)
         self.assertIn(b"No safe Tune Update yet", detail.data)
         self.assertIn(b"Need a better follow-up Blackbox Log", detail.data)
+        workbench = client.get(f"/loops/{loop_id}/workbench")
+        self.assertEqual(workbench.status_code, 200)
+        self.assertIn(b"Tuning Iteration", workbench.data)
+        self.assertIn(b"No safe Tune Update yet", workbench.data)
+        self.assertIn(b"Need a better follow-up Blackbox Log", workbench.data)
 
     def test_loop_page_can_create_and_close_loop(self):
         build_id = create_build(self.conn, "5 inch", fc_snapshot={"fc_variant": "BTFL"})
@@ -394,6 +402,30 @@ class OperatorWebTests(unittest.TestCase):
         task = self.conn.execute("SELECT status, response_json FROM operator_tasks WHERE id = ?", (task_id,)).fetchone()
         self.assertEqual(task["status"], "resolved")
         self.assertIn("closed_with_loop", task["response_json"])
+
+    def test_workbench_owns_initial_build_and_loop_setup(self):
+        client = create_app(self.db_path).test_client()
+
+        empty = client.get("/workbench")
+        self.assertEqual(empty.status_code, 200)
+        self.assertIn(b"Create a Build", empty.data)
+        self.assertIn(b'action="/builds"', empty.data)
+        self.assertNotIn(b"Dashboard", empty.data)
+
+        build_response = client.post(
+            "/builds",
+            data={"name": "Darwin 5 inch", "fc_snapshot_json": '{"fc_variant":"BTFL"}', "next": "/workbench"},
+        )
+        self.assertEqual(build_response.status_code, 302)
+        self.assertEqual(build_response.headers["Location"], "/workbench")
+
+        setup = client.get("/workbench")
+        self.assertIn(b"Start a Loop", setup.data)
+        self.assertIn(b'action="/loops"', setup.data)
+
+        loop_response = client.post("/loops", data={"build_id": "1", "tune_goal": "Validate hover tune"})
+        self.assertEqual(loop_response.status_code, 302)
+        self.assertEqual(loop_response.headers["Location"], "/loops/1/workbench")
 
     def test_build_page_can_create_build(self):
         client = create_app(self.db_path).test_client()

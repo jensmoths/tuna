@@ -53,6 +53,9 @@ def register_loop_page_routes(
             return "FC snapshot JSON must be an object", 400
         notes = request.form.get("operator_notes", "").strip()
         build_id = create_build(conn, name, fc_snapshot=fc_snapshot, operator_notes=notes)
+        next_url = request.form.get("next", "").strip()
+        if next_url.startswith("/") and not next_url.startswith("//"):
+            return redirect(next_url)
         return redirect(url_for("builds") + f"#build-{build_id}")
 
     @app.get("/loops")
@@ -79,7 +82,7 @@ def register_loop_page_routes(
         if not tune_goal:
             return "Tune Goal is required", 400
         loop_id = create_loop(conn, build_id, tune_goal)
-        return redirect(url_for("loop_detail", loop_id=loop_id))
+        return redirect(url_for("loop_workbench", loop_id=loop_id))
 
     @app.get("/loops/<int:loop_id>")
     def loop_detail(loop_id: int):

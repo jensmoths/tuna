@@ -27,6 +27,91 @@ def _error(exc: BaseException, *, retryable: bool = True) -> dict[str, Any]:
     return {"error": {"kind": exc.__class__.__name__, "message": str(exc), "retryable": retryable}}
 
 
+def _fake_enabled() -> bool:
+    return os.environ.get("TUNA_FCS_FAKE", "").lower() in {"1", "true", "yes", "on"}
+
+
+def _fake_inspect_payload(args: Any) -> dict[str, Any]:
+    if os.environ.get("TUNA_FCS_INSPECT_FIXTURE_JSON"):
+        payload = json.loads(os.environ["TUNA_FCS_INSPECT_FIXTURE_JSON"])
+        if not isinstance(payload, dict):
+            raise ValueError("TUNA_FCS_INSPECT_FIXTURE_JSON must be a JSON object")
+    else:
+        payload = {
+            "identity": {
+                "fc_variant": "BTFL",
+                "fc_version": "4.5.2",
+                "msp_api": "1.47",
+                "board_name": "FAKEF7",
+            },
+            "blackbox_storage": {
+                "dataflash_available": True,
+                "dataflash_supported": True,
+                "dataflash_ready": True,
+                "sector_count": 4096,
+                "total_size": 16777216,
+                "used_size": 3168256,
+                "sdcard_summary_available": False,
+                "diagnostic": "fake FCS fixture for no-hardware exploratory testing",
+            },
+            "pids": {
+                "roll": [45, 80, 40],
+                "pitch": [47, 84, 46],
+                "yaw": [45, 80, 0],
+            },
+            "settings": {
+                "p_roll": 45,
+                "i_roll": 80,
+                "d_roll": 40,
+                "p_pitch": 47,
+                "i_pitch": 84,
+                "d_pitch": 46,
+                "p_yaw": 45,
+                "i_yaw": 80,
+                "d_yaw": 0,
+            },
+        }
+    payload.setdefault("connection", args.connection)
+    if args.connection == "usb":
+        payload.setdefault("usb_device", args.usb_device or "auto")
+    else:
+        payload.setdefault("bridge_host", args.bridge_host)
+        payload.setdefault("bridge_port", args.port)
+    payload["fixture"] = {"enabled": True, "source": "TUNA_FCS_FAKE"}
+    return payload
+
+
+def _fake_status_payload(args: Any) -> dict[str, Any]:
+    payload = {"connection": args.connection, "fixture": {"enabled": True, "source": "TUNA_FCS_FAKE"}}
+    if args.connection == "usb":
+        payload["devices"] = [{"device": args.usb_device or "/dev/ttyFAKE0", "description": "Fake FCS USB device"}]
+    else:
+        payload.update(
+            {
+                "bridge_host": args.bridge_host,
+                "status_text": "USB_CDC_CONNECTED fake=1",
+                "usb_cdc_connected": True,
+                "msc_raw_ready": False,
+                "msc_mounted": False,
+            }
+        )
+    return payload
+
+
+def _fake_write_payload(args: Any, cli_text: str) -> dict[str, Any]:
+    payload = {
+        "connection": args.connection,
+        "success": True,
+        "transcript": f"# fake FCS write accepted\n{cli_text}\nsave\n",
+        "fixture": {"enabled": True, "source": "TUNA_FCS_FAKE"},
+    }
+    if args.connection == "usb":
+        payload["usb_device"] = args.usb_device or "auto"
+    else:
+        payload["bridge_host"] = args.bridge_host
+    return payload
+
+
 def _inspect_bridge(host: str, *, port: int, timeout_seconds: float) -> dict[str, Any]:
     with BridgeTransport(host, port, timeout_seconds=timeout_seconds) as transport:
         capabilities = discover_fc_capabilities(MspClient(transport), timeout_seconds=timeout_seconds)
@@ -132,9 +217,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.area == "inspect":
-            payload = _inspect_usb(args.usb_device, timeout_seconds=args.timeout) if args.connection == "usb" else _inspect_bridge(args.bridge_host, port=args.port, timeout_seconds=args.timeout)
+            if _fake_enabled():
+                payload = _fake_inspect_payload(args)
+            else:
+                payload = _inspect_usb(args.usb_device, timeout_seconds=args.timeout) if args.connection == "usb" else _inspect_bridge(args.bridge_host, port=args.port, timeout_seconds=args.timeout)
         elif args.area == "status":
-            if args.connection == "usb":
+            if _fake_enabled():
+                payload = _fake_status_payload(args)
+            elif args.connection == "usb":
                 payload = {"connection": "usb", "devices": [device.__dict__ for device in list_usb_fc_devices()]}
             else:
                 bridge_status = read_bridge_status(args.bridge_host, timeout_seconds=args.timeout)
@@ -184,16 +274,21 @@ def main(argv: list[str] | None = None) -> int:
             if args.confirm != "write-fc-cli":
                 raise ValueError("confirmation must be write-fc-cli")
             cli_text = args.command if args.command is not None else Path(args.cli_file).read_text()
-            if args.connection == "usb":
+            if _fake_enabled():
+                payload = _fake_write_payload(args, cli_text)
+            elif args.connection == "usb":
                 with UsbSerialTransport(args.usb_device, timeout_seconds=args.timeout) as transport:
                     result = write_betaflight_cli_text(transport, cli_text, timeout_seconds=args.timeout)
                 payload = {"connection": "usb", "usb_device": args.usb_device or "auto", "success": result.success, "transcript": result.transcript}
+                if not result.success:
+                    _print_json(payload)
+                    return 1
             else:
                 result = write_betaflight_cli_text_to_bridge(args.bridge_host, args.port, cli_text, timeout_seconds=args.timeout)
                 payload = {"connection": "bridge", "bridge_host": args.bridge_host, "success": result.success, "transcript": result.transcript}
-            if not result.success:
-                _print_json(payload)
-                return 1
+                if not result.success:
+                    _print_json(payload)
+                    return 1
         else:
             return 2
     except (OSError, RuntimeError, TimeoutError, ValueError, ConnectionError) as exc:

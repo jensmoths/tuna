@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from flask import Flask, redirect, render_template, request, url_for
+from flask import Flask, g, redirect, request, url_for
 from markupsafe import Markup, escape
 
 from tuna_core.storage import connect, init_db
@@ -47,9 +47,18 @@ def create_app(db_path: str | Path) -> Flask:
     app.config.setdefault("TUNE_VERBOSE", False)
 
     def db():
-        conn = connect(app.config["TUNE_DB"])
-        init_db(conn)
+        conn = g.get("tuna_db_conn")
+        if conn is None:
+            conn = connect(app.config["TUNE_DB"])
+            init_db(conn)
+            g.tuna_db_conn = conn
         return conn
+
+    @app.teardown_appcontext
+    def close_db(_exc: BaseException | None) -> None:
+        conn = g.pop("tuna_db_conn", None)
+        if conn is not None:
+            conn.close()
 
     def supervisor() -> PiRpcSupervisor:
         existing = app.extensions.get("tuna_pi_supervisor")
@@ -70,18 +79,6 @@ def create_app(db_path: str | Path) -> Flask:
 
     @app.get("/")
     def dashboard():
-        conn = db()
-        counts = {
-            "builds": conn.execute("SELECT COUNT(*) FROM builds").fetchone()[0],
-            "open_loops": conn.execute("SELECT COUNT(*) FROM loops WHERE status = 'open'").fetchone()[0],
-            "open_iterations": conn.execute("SELECT COUNT(*) FROM tuning_iterations WHERE status = 'open'").fetchone()[0],
-            "open_tasks": conn.execute("SELECT COUNT(*) FROM operator_tasks WHERE status = 'open'").fetchone()[0],
-            "open_notifications": conn.execute("SELECT COUNT(*) FROM operator_notifications WHERE status = 'open'").fetchone()[0],
-            "pending_writes": conn.execute("SELECT COUNT(*) FROM tune_updates WHERE status = 'approved_pending_write'").fetchone()[0],
-        }
-        tasks = conn.execute("SELECT * FROM operator_tasks WHERE status = 'open' ORDER BY created_at, id LIMIT 5").fetchall()
-        notifications = conn.execute("SELECT * FROM operator_notifications WHERE status = 'open' ORDER BY created_at, id LIMIT 5").fetchall()
-        updates = conn.execute("SELECT * FROM tune_updates WHERE status IN ('proposed','approved_pending_write','write_failed') ORDER BY created_at DESC LIMIT 5").fetchall()
-        return render_template("dashboard.html", counts=counts, tasks=tasks, notifications=notifications, updates=updates)
+        return redirect(url_for("workbench_index"))
 
     return app

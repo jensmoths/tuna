@@ -345,6 +345,49 @@ class TuneCliTests(unittest.TestCase):
         self.assertEqual(result["error"]["kind"], "ValueError")
         self.assertIn("no decoded CSV", result["error"]["message"])
 
+    def test_analysis_record_fixture_stores_supplied_summary_without_decoder(self):
+        self.run_cli_json("db", "init")
+        build = self.run_cli_json("build", "create", "5 inch")
+        log = self.run_cli_json(
+            "log",
+            "import",
+            "reference-logs/btfl_001.bbl",
+            "--build-id",
+            str(build["build_id"]),
+            "--storage-dir",
+            str(self.root / "logs"),
+        )
+        fixture = self.root / "fixture-analysis.json"
+        fixture.write_text(json.dumps({"row_count": 12, "duration_seconds": 1.25, "quality": {"usable": True}, "warnings": []}))
+
+        payload = self.run_cli_json("analysis", "record-fixture", "--log-id", str(log["log_id"]), "--analysis-json-file", str(fixture))
+        summary = self.run_cli_json("analysis", "summary", "--log-id", str(log["log_id"]))
+
+        self.assertEqual(payload["row_count"], 12)
+        self.assertEqual(summary["row_count"], 12)
+        self.assertTrue(summary["quality"]["usable"])
+
+    def test_analysis_record_fixture_can_use_named_exploratory_scenario(self):
+        self.run_cli_json("db", "init")
+        build = self.run_cli_json("build", "create", "5 inch")
+        log = self.run_cli_json(
+            "log",
+            "import",
+            "reference-logs/btfl_001.bbl",
+            "--build-id",
+            str(build["build_id"]),
+            "--storage-dir",
+            str(self.root / "logs"),
+        )
+
+        payload = self.run_cli_json("analysis", "record-fixture", "--log-id", str(log["log_id"]), "--scenario", "propwash")
+        summary = self.run_cli_json("analysis", "summary", "--log-id", str(log["log_id"]))
+
+        self.assertEqual(payload["scenario"], "propwash")
+        self.assertEqual(payload["row_count"], 4200)
+        self.assertEqual(summary["propwash_analysis"]["summary"]["segment_count"], 2)
+        self.assertIn("propwash_oscillation", summary["pid_response"]["axes"]["roll"]["classifications"])
+
     def test_log_import_json_is_concise_by_default_and_can_write_metadata(self):
         self.run_cli_json("db", "init")
         build = self.run_cli_json("build", "create", "5 inch")

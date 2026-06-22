@@ -37,6 +37,38 @@ class FcsCliTests(unittest.TestCase):
         self.assertEqual(result, payload)
         inspect.assert_called_once_with("/dev/ttyACM0", timeout_seconds=2.5)
 
+    def test_fake_inspect_uses_explicit_environment_fixture(self):
+        with patch.dict(os.environ, {"TUNA_FCS_FAKE": "1"}, clear=False):
+            with patch("tuna_fcs.cli._inspect_bridge") as inspect:
+                code, result = self.run_cli_json_with_code("inspect", "--bridge-host", "bench-bridge")
+
+        self.assertEqual(code, 0)
+        self.assertEqual(result["fixture"]["source"], "TUNA_FCS_FAKE")
+        self.assertEqual(result["connection"], "bridge")
+        self.assertEqual(result["bridge_host"], "bench-bridge")
+        self.assertEqual(result["identity"]["fc_variant"], "BTFL")
+        self.assertEqual(result["settings"]["d_roll"], 40)
+        inspect.assert_not_called()
+
+    def test_fake_inspect_accepts_custom_fixture_json(self):
+        custom = json.dumps({"identity": {"fc_variant": "BTFL", "fc_version": "4.6.0"}, "settings": {"d_roll": 38}})
+        with patch.dict(os.environ, {"TUNA_FCS_FAKE": "1", "TUNA_FCS_INSPECT_FIXTURE_JSON": custom}, clear=False):
+            code, result = self.run_cli_json_with_code("inspect", "--connection", "usb", "--usb-device", "/dev/ttyFAKE0")
+
+        self.assertEqual(code, 0)
+        self.assertEqual(result["fixture"]["enabled"], True)
+        self.assertEqual(result["connection"], "usb")
+        self.assertEqual(result["usb_device"], "/dev/ttyFAKE0")
+        self.assertEqual(result["settings"], {"d_roll": 38})
+
+    def test_fake_status_reports_ready_bridge_without_network(self):
+        with patch.dict(os.environ, {"TUNA_FCS_FAKE": "1"}, clear=False):
+            code, result = self.run_cli_json_with_code("status", "--bridge-host", "bench-bridge")
+
+        self.assertEqual(code, 0)
+        self.assertTrue(result["usb_cdc_connected"])
+        self.assertEqual(result["fixture"]["source"], "TUNA_FCS_FAKE")
+
     def test_blackbox_transfer_delegates_to_fcs_download(self):
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "flight.bbl"

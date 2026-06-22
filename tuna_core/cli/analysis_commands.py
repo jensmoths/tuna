@@ -6,7 +6,7 @@ from typing import Any
 
 from tuna_blackbox.analysis_views import capture_plan_view, compare_analyses, filter_evidence_view, limited_events, noise_peak_view, pid_response_view, propwash_view, rpm_filter_view
 from tuna_core.cli.output import emit, emit_command_error, print_json, require_row
-from tuna_core.services.analysis import analyze_imported_log, decode_imported_log, latest_analysis, list_recordings
+from tuna_core.services.analysis import analyze_imported_log, analysis_fixture_scenario, decode_imported_log, latest_analysis, list_recordings, record_analysis_fixture
 from tuna_core.services.segment_rows import get_segment_rows
 
 
@@ -48,6 +48,17 @@ def _write_analysis_file(path_text: str | None, payload: dict[str, Any]) -> str 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return str(output_path)
+
+
+def _read_analysis_fixture(path_text: str) -> dict[str, Any]:
+    path = Path(path_text)
+    try:
+        payload = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Analysis fixture must be valid JSON: {exc.msg}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Analysis fixture must be a JSON object")
+    return payload
 
 
 def _compact_segment(segment: dict[str, Any]) -> dict[str, Any]:
@@ -166,6 +177,17 @@ def _handle_decode_commands(conn: Any, args: Any) -> int | None:
         concise_payload = _analysis_concise_payload(conn, log_id=args.log_id, payload=payload, output_json_file=output_json_file, csv_path=str(decoded["csv_path"]))
         concise_payload["recordings"] = recording_summaries
         print_json(payload if args.full_json else concise_payload) if args.json else print(decoded["csv_path"])
+    elif args.action == "record-fixture":
+        try:
+            fixture_payload = analysis_fixture_scenario(args.scenario) if args.scenario else _read_analysis_fixture(args.analysis_json_file)
+            payload = record_analysis_fixture(conn, args.log_id, fixture_payload)
+        except (OSError, RuntimeError, ValueError) as exc:
+            emit_command_error(exc, args.json)
+            return 1
+        concise_payload = _analysis_concise_payload(conn, log_id=args.log_id, payload=payload, output_json_file=args.analysis_json_file)
+        if args.scenario:
+            concise_payload["scenario"] = args.scenario
+        print_json(payload if args.full_json else concise_payload) if args.json else print(args.scenario or args.analysis_json_file)
     else:
         return None
     return 0

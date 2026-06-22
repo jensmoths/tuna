@@ -1,10 +1,51 @@
 {% extends "layout.html" %}{% block body %}
 <div class="workbench-page">
 {% if not state %}
-  <h1>Loop workbench</h1>
-  <div class="workbench-header">
-    <p>No Loop exists yet.</p>
-    {% if builds %}<p><a href="/loops">Start a Loop</a> to use the Loop workbench.</p>{% else %}<p><a href="/builds">Create or confirm a Build</a> before starting a Loop.</p>{% endif %}
+  <div class="workbench-top">
+    <div>
+      <h1>Loop workbench</h1>
+      <p class="workbench-subtitle">Start from a Build, then run a Loop from this single Operator Console surface.</p>
+    </div>
+  </div>
+  <div class="setup-grid">
+    <div class="card setup-card">
+      <p class="section-label">Setup</p>
+      <h2>{% if builds %}Start a Loop{% else %}Create a Build{% endif %}</h2>
+      {% if builds %}
+      <form method="post" action="/loops">
+        <label>Build
+          <select name="build_id" required>
+            {% for build in builds %}<option value="{{ build.id }}">#{{ build.id }} {{ build.name }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>Tune Goal
+          <textarea name="tune_goal" rows="3" required placeholder="Describe what this Loop should improve or verify"></textarea>
+        </label>
+        <button type="submit">Start Loop</button>
+      </form>
+      {% else %}
+      <form method="post" action="/builds">
+        <input type="hidden" name="next" value="/workbench">
+        <label>Build name <input name="name" required placeholder="5-inch freestyle"></label>
+        <label>FC snapshot JSON
+          <textarea name="fc_snapshot_json" rows="5" placeholder='{"fc_variant":"BTFL","fc_version":"25.12.3"}'></textarea>
+        </label>
+        <label>Operator notes
+          <textarea name="operator_notes" rows="3" placeholder="Airframe, motors, props, battery, or confirmation notes"></textarea>
+        </label>
+        <button type="submit">Create Build</button>
+      </form>
+      {% endif %}
+    </div>
+    <div class="card setup-card setup-card-secondary">
+      <p class="section-label">Workbench status</p>
+      <h2>No Loop yet</h2>
+      {% if builds %}
+      <p>Create the first Loop for one Build and Tune Goal. After that, the Workbench will show Operator Tasks, Operator Notifications, Tuning Agent status, and recent Loop activity.</p>
+      {% else %}
+      <p>Create or confirm a Build first. The Tuning Agent can later inspect the connected FC through FCS and request Operator confirmation when needed.</p>
+      {% endif %}
+    </div>
   </div>
 {% else %}
   {% set loop = state.loop %}

@@ -15,20 +15,22 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     conn = connect(args.db)
+    try:
+        if args.area == "db" and args.action == "init":
+            init_db(conn)
+            emit({"db": args.db}, args.json)
+            return 0
 
-    if args.area == "db" and args.action == "init":
         init_db(conn)
-        emit({"db": args.db}, args.json)
-        return 0
-
-    init_db(conn)
-    analysis_commands.analyze_imported_log = analyze_imported_log
-    analysis_commands.decode_imported_log = decode_imported_log
-    for handler in (handle_state_command, handle_analysis_command, handle_workflow_command, handle_operator_command):
-        handled = handler(conn, args)
-        if handled is not None:
-            return handled
-    return 2
+        analysis_commands.analyze_imported_log = analyze_imported_log
+        analysis_commands.decode_imported_log = decode_imported_log
+        for handler in (handle_state_command, handle_analysis_command, handle_workflow_command, handle_operator_command):
+            handled = handler(conn, args)
+            if handled is not None:
+                return handled
+        return 2
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":
