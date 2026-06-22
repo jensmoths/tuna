@@ -473,6 +473,8 @@ class TuneCliTests(unittest.TestCase):
             "confirm-build",
             "--candidate-build-id",
             "3",
+            "--loop-id",
+            "2",
             "--fc-snapshot-json",
             '{"fc_variant":"BTFL","fc_version":"4.5.2"}',
         )
@@ -481,6 +483,7 @@ class TuneCliTests(unittest.TestCase):
         tasks = self.run_cli_json("task", "list")
         self.assertEqual(tasks[0]["kind"], "confirm_build")
         payload = json.loads(tasks[0]["payload_json"])
+        self.assertEqual(payload["loop_id"], 2)
         self.assertEqual(payload["candidate_build_id"], 3)
         self.assertEqual(payload["fc_snapshot"]["fc_variant"], "BTFL")
         self.assertEqual(payload["reason"], "")

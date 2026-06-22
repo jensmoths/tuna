@@ -397,6 +397,24 @@ class OperatorWebTests(unittest.TestCase):
         self.assertIn(b"Tune Update #1 is approved and waiting for Tuning Agent write-back.", page.data)
         self.assertNotIn(b"wait for a live update or an Operator Task", page.data)
 
+    def test_workbench_starts_agent_when_only_resume_cursor_exists(self):
+        build_id = create_build(self.conn, "5 inch", fc_snapshot={"fc_variant": "BTFL"})
+        loop_id = create_loop(self.conn, build_id, "baseline")
+        self.conn.execute(
+            """
+            INSERT INTO tuning_agent_sessions (loop_id, status, resume_cursor_json)
+            VALUES (?, ?, ?)
+            """,
+            (loop_id, "Idle", '{"last_import":{"log_id":1}}'),
+        )
+        self.conn.commit()
+
+        page = create_app(self.db_path).test_client().get(f"/loops/{loop_id}/workbench")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Start Tuning Agent", page.data)
+        self.assertNotIn(b"Continue Tuning Agent", page.data)
+
     def test_workbench_shows_applied_update_and_continue_when_agent_idle(self):
         build_id = create_build(self.conn, "5 inch", fc_snapshot={"fc_variant": "BTFL"})
         loop_id = create_loop(self.conn, build_id, "baseline")

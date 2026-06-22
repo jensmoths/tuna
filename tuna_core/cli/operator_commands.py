@@ -33,7 +33,7 @@ def handle_operator_command(conn: Any, args: Any) -> int | None:
         task_id = create_fcs_connection_task(conn, build_id=args.build_id, loop_id=args.loop_id, bridge_host=args.bridge_host, reason=args.reason, next_step=args.next_step)
         emit({"task_id": task_id, "kind": "request_fcs_connection"}, args.json)
     elif args.area == "task" and args.action == "confirm-build":
-        task_id = create_build_confirmation_task(conn, fc_snapshot=json.loads(args.fc_snapshot_json), candidate_build_id=args.candidate_build_id, reason=args.reason)
+        task_id = create_build_confirmation_task(conn, fc_snapshot=json.loads(args.fc_snapshot_json), candidate_build_id=args.candidate_build_id, loop_id=args.loop_id, reason=args.reason)
         emit({"task_id": task_id, "kind": "confirm_build"}, args.json)
     elif args.area == "task" and args.action == "request-tune-goal":
         task_id = create_tune_goal_task(conn, build_id=args.build_id, reason=args.reason)

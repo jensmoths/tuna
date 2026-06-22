@@ -217,6 +217,7 @@ def _add_operator_commands(top: argparse._SubParsersAction[argparse.ArgumentPars
     build = task_sub.add_parser("confirm-build")
     build.add_argument("--fc-snapshot-json", required=True)
     build.add_argument("--candidate-build-id", type=int)
+    build.add_argument("--loop-id", type=int)
     build.add_argument("--reason", default="")
     _add_json(build)
     goal = task_sub.add_parser("request-tune-goal")

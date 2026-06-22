@@ -4,7 +4,8 @@
 {% set agent_status_lower = agent_status | lower %}
 {% set agent_working = state.agent_process_running and 'idle' not in agent_status_lower and 'waiting' not in agent_status_lower and 'aborted' not in agent_status_lower and 'failed' not in agent_status_lower %}
 {% set agent_error = 'failed' in agent_status_lower or 'error' in agent_status_lower %}
-{% set can_resume_agent = agent_session and ('idle' in agent_status_lower or 'aborted' in agent_status_lower or not state.agent_process_running) %}
+{% set has_pi_session_history = agent_session and (agent_session.pi_session_file or state.agent_process_running) %}
+{% set can_resume_agent = has_pi_session_history and ('idle' in agent_status_lower or 'aborted' in agent_status_lower or not state.agent_process_running) %}
 {% set primary_agent_label = 'Continue Tuning Agent' if can_resume_agent else 'Start Tuning Agent' %}
 {% set show_abort_agent = state.agent_process_running and 'idle' not in agent_status_lower %}
 {% set selected_connection = agent_session.fc_connection if agent_session and agent_session.fc_connection else default_fc_connection %}

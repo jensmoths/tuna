@@ -111,6 +111,7 @@ def create_build_confirmation_task(
     fc_snapshot: dict[str, Any],
     reason: str = "",
     candidate_build_id: int | None = None,
+    loop_id: int | None = None,
 ) -> int:
     body = (
         "Confirm whether the flight-controller snapshot belongs to an existing Build or should be recorded "
@@ -118,6 +119,7 @@ def create_build_confirmation_task(
         "based on the physical aircraft and any tuning-relevant hardware changes."
     )
     payload = {
+        "loop_id": loop_id,
         "candidate_build_id": candidate_build_id,
         "fc_snapshot": fc_snapshot,
         "reason": reason,

@@ -61,6 +61,18 @@ Use this checklist before broader discovery:
 8. Complete no-change **Tuning Iterations** atomically:
    `python3 -m tuna_core iteration complete-with-diagnosis --iteration-id <id> --body ... --reason ... --json`
 
+There is no `tuna-core update list` command. Use
+`python3 -m tuna_core update pending-writes --json` for approved writes, and use
+`loop status`, `loop context`, or targeted task/update commands for current Loop
+state.
+
+For no-hardware exploratory workflow tests, explicit fixtures may mark FCS data
+or Blackbox Analysis as fixture-sourced. If Tuna state says a fixture Blackbox
+Analysis is usable and the capture plan does not need more data, treat it as
+sufficient evidence for exercising the Tune Update review/write-back workflow.
+Do not complete a **Tuning Iteration** as no-change solely because the evidence
+is fixture-sourced.
+
 Do not read source code, repository docs, decoded CSV files, or full analysis
 JSON during normal **Loop** operation. Do not write ad hoc Python/Ruby/shell
 parsers for Tuna state, analysis, or decoded logs. If a compact CLI command is
@@ -101,8 +113,12 @@ Use FCS/MSP to extract what is available from the FC when hardware is connected:
 Then create a `confirm_build` **Operator Task** if human confirmation is needed. The Operator Console records whether the snapshot matches an existing **Build**, requires a new **Build**, or cannot be confirmed; the **Tuning Agent** decides the next workflow action and records the resulting **Build** with `tuna-core`.
 
 ```bash
-python3 -m tuna_core task confirm-build --fc-snapshot-json '{"fc_variant":"BTFL"}' --json
+python3 -m tuna_core task confirm-build --loop-id 1 --fc-snapshot-json '{"fc_variant":"BTFL"}' --json
 ```
+
+When you create a `confirm_build` **Operator Task** for an active **Loop**, include
+the **Loop** id and wait for the **Operator** response before starting a
+**Tuning Iteration** or proposing a **Tune Update**.
 
 Example:
 
