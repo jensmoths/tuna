@@ -211,6 +211,7 @@ class OperatorWebTests(unittest.TestCase):
         self.assertEqual(root.status_code, 302)
         self.assertEqual(root.headers["Location"], "/workbench")
         self.assertIn(b"Inspecting Tuna state", page.data)
+        self.assertNotIn(b"Tuning Agent status", page.data)
         self.assertIn(b"Connect FCS", page.data)
         self.assertIn(b"Operator completed task. Notes: none.", page.data)
         self.assertNotIn(b"Operator responded: {", page.data)

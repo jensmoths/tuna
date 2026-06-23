@@ -23,7 +23,7 @@ def workbench_state(conn: Any, loop_id: int, agent_process_running: bool = False
     notifications = _loop_notifications(conn, loop_id)
     iterations = _loop_iterations(conn, loop_id)
     latest_iteration = iterations[-1] if iterations else None
-    events = _activity_events(agent_session, tasks, notifications, iterations)
+    events = _activity_events(tasks, notifications, iterations)
     open_tasks = [task for task in tasks if task["status"] == "open"]
     open_notifications = [notification for notification in notifications if notification["status"] == "open"]
     pending_write_count = _pending_write_count(conn, loop_id)
@@ -136,23 +136,11 @@ def _task_loop_id(conn: Any, task: dict[str, Any]) -> int | None:
 
 
 def _activity_events(
-    agent_session: dict[str, Any] | None,
     tasks: list[dict[str, Any]],
     notifications: list[dict[str, Any]],
     iterations: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
-    if agent_session:
-        events.append(
-            {
-                "kind": "agent_status",
-                "type_label": "Tuning Agent",
-                "title": "Tuning Agent status",
-                "body": f"Tuning Agent is {agent_session['status']}.",
-                "created_at": agent_session["updated_at"],
-                "status_label": agent_session["status"],
-            }
-        )
     events.extend(_task_events(tasks))
     events.extend(_notification_events(notifications))
     events.extend(_iteration_events(iterations))
