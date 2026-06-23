@@ -247,7 +247,7 @@ class OperatorWebTests(unittest.TestCase):
         self.assertEqual(supervisor.started[1]["fc_connection"], "usb")
         self.assertEqual(supervisor.started[1]["usb_device"], "/dev/ttyACM0")
 
-    def test_workbench_running_agent_uses_working_status_and_secondary_controls(self):
+    def test_workbench_running_agent_uses_working_status_and_expert_mode(self):
         build_id = create_build(self.conn, "5 inch")
         loop_id = create_loop(self.conn, build_id, "baseline")
         self.conn.execute(
@@ -269,10 +269,12 @@ class OperatorWebTests(unittest.TestCase):
 
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"Tuning Agent is working", page.data)
-        self.assertIn(b"Agent controls", page.data)
+        self.assertIn(b"Expert mode", page.data)
+        self.assertIn(b"Expert details", page.data)
         self.assertIn(b"Connection and model settings", page.data)
         self.assertIn(b"Abort Tuning Agent", page.data)
-        self.assertNotIn(b"Start or resume", page.data)
+        self.assertNotIn(b"Agent controls", page.data)
+        self.assertNotIn(b"Start with expert settings", page.data)
 
     def test_loop_events_streams_workbench_state(self):
         build_id = create_build(self.conn, "5 inch")

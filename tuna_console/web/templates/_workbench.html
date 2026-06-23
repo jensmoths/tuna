@@ -30,7 +30,7 @@
   </div>
 </div>
 
-<div class="workbench-grid">
+<div class="workbench-grid{% if not state.open_notifications %} no-notifications{% endif %}">
   <aside class="side-panel">
     <div class="card status-card">
       <h2>Loop context</h2>
@@ -38,11 +38,16 @@
         <dt>Loop</dt><dd>#{{ state.loop.id }} · {{ state.loop.status }}</dd>
         <dt>Build</dt><dd>#{{ state.loop.build_id }} {{ state.loop.build_name }}</dd>
         <dt>Tune Goal</dt><dd>{{ state.loop.tune_goal }}</dd>
-        <dt>Tuning Agent</dt><dd>{{ agent_status }}</dd>
-        <dt>FC connection</dt><dd>{{ selected_connection }}</dd>
         <dt>Open tasks</dt><dd>{{ state.open_task_count }}</dd>
-        <dt>Open notifications</dt><dd>{{ state.open_notification_count }}</dd>
       </dl>
+      <details class="expert-mode context-expert">
+        <summary>Expert details</summary>
+        <dl class="status-list context-list">
+          <dt>Tuning Agent</dt><dd>{{ agent_status }}</dd>
+          <dt>FC connection</dt><dd>{{ selected_connection }}</dd>
+          <dt>Open notifications</dt><dd>{{ state.open_notification_count }}</dd>
+        </dl>
+      </details>
     </div>
   </aside>
 
@@ -126,21 +131,13 @@
       <p>No durable Loop activity recorded yet.</p>
       {% endif %}
     </div>
-  </main>
 
-  <aside class="side-panel right-panel">
-    <div class="card agent-control-card">
-      <h2>Agent controls</h2>
-      {% if show_abort_agent %}
-      <p class="muted">The Tuning Agent is running. Settings below apply the next time it starts or resumes.</p>
-      <form method="post" action="/loops/{{ loop_id }}/tuning-agent/abort"><input type="hidden" name="next" value="/loops/{{ loop_id }}/workbench"><button type="submit">Abort Tuning Agent</button></form>
-      {% else %}
-      <p class="muted">Use the main workbench action for the default start or continue path.</p>
-      {% endif %}
-      <details class="agent-controls">
-        <summary>Connection and model settings</summary>
-        <form method="post" action="/loops/{{ loop_id }}/tuning-agent/start">
-          <input type="hidden" name="next" value="/loops/{{ loop_id }}/workbench">
+    <details class="expert-mode agent-controls">
+      <summary>Expert mode</summary>
+      <form method="post" action="/loops/{{ loop_id }}/tuning-agent/start">
+        <input type="hidden" name="next" value="/loops/{{ loop_id }}/workbench">
+        <fieldset>
+          <legend>Connection and model settings</legend>
           <label>FC connection
             <select name="fc_connection">
               <option value="bridge"{% if selected_connection == 'bridge' %} selected{% endif %}>FC Bridge</option>
@@ -161,15 +158,17 @@
               {% for level in thinking_level_choices %}<option value="{{ level }}"{% if selected_thinking == level %} selected{% endif %}>{{ level }}</option>{% endfor %}
             </select>
           </label>
-          {% if not show_abort_agent %}
-          <button type="submit">Start or resume</button>
-          {% if agent_session and not state.agent_process_running and 'idle' not in agent_status_lower %}<button type="submit" formaction="/loops/{{ loop_id }}/tuning-agent/continue">Continue</button>{% endif %}
-          {% endif %}
-        </form>
-      </details>
-    </div>
+        </fieldset>
+        {% if not show_abort_agent %}
+        <button type="submit">Start with expert settings</button>
+        {% if agent_session and not state.agent_process_running and 'idle' not in agent_status_lower %}<button type="submit" formaction="/loops/{{ loop_id }}/tuning-agent/continue">Continue with expert settings</button>{% endif %}
+        {% endif %}
+      </form>
+    </details>
+  </main>
 
-    {% if state.open_notifications %}
+  {% if state.open_notifications %}
+  <aside class="side-panel right-panel">
     <div class="card">
       <h2>Operator Notifications</h2>
       {% for notification in state.open_notifications %}
@@ -183,6 +182,6 @@
       </div>
       {% endfor %}
     </div>
-    {% endif %}
   </aside>
+  {% endif %}
 </div>
