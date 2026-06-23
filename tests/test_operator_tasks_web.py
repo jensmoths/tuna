@@ -395,6 +395,7 @@ class OperatorWebTests(unittest.TestCase):
         self.assertIn(b"Approved Tune Update waiting for write-back", page.data)
         self.assertIn(b"Start Tuning Agent", page.data)
         self.assertIn(b"Tune Update #1 is approved and waiting for Tuning Agent write-back.", page.data)
+        self.assertIn(b"Targets: d_pitch = 48.", page.data)
         self.assertNotIn(b"wait for a live update or an Operator Task", page.data)
 
     def test_workbench_starts_agent_when_only_resume_cursor_exists(self):
@@ -446,6 +447,7 @@ class OperatorWebTests(unittest.TestCase):
         self.assertIn(b"Tune Update applied", page.data)
         self.assertIn(b"Continue Tuning Agent", page.data)
         self.assertIn(b"Tune Update #", page.data)
+        self.assertIn(b"Targets: d_pitch = 48.", page.data)
         self.assertNotIn(b"wait for a live update or an Operator Task", page.data)
 
     def test_loop_page_can_create_and_close_loop(self):

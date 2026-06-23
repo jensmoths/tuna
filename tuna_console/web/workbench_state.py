@@ -89,7 +89,8 @@ def _loop_iterations(conn: Any, loop_id: int) -> list[dict[str, Any]]:
           d.body AS diagnosis_body,
           d.confidence AS diagnosis_confidence,
           u.id AS tune_update_id,
-          u.status AS tune_update_status
+          u.status AS tune_update_status,
+          u.settings_json AS tune_update_settings_json
         FROM tuning_iterations i
         LEFT JOIN diagnoses d ON d.iteration_id = i.id
         LEFT JOIN tune_updates u ON u.iteration_id = i.id
@@ -164,7 +165,11 @@ def _iteration_events(iterations: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for iteration in iterations:
         status = iteration.get("result") or iteration.get("status")
         if iteration.get("tune_update_id"):
-            body = _tune_update_activity_body(iteration["tune_update_id"], iteration.get("tune_update_status"))
+            body = _tune_update_activity_body(
+                iteration["tune_update_id"],
+                iteration.get("tune_update_status"),
+                iteration.get("tune_update_settings_json"),
+            )
         elif iteration.get("diagnosis_body"):
             body = str(iteration["diagnosis_body"])
         else:
@@ -186,19 +191,38 @@ def _iteration_events(iterations: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return events
 
 
-def _tune_update_activity_body(update_id: object, status: object) -> str:
+def _tune_update_activity_body(update_id: object, status: object, settings_json: object = None) -> str:
     status_text = str(status or "")
+    settings_text = _settings_summary(settings_json)
+    suffix = f" Targets: {settings_text}." if settings_text else ""
     if status_text == "proposed":
-        return f"Tune Update #{update_id} is waiting for Operator review."
+        return f"Tune Update #{update_id} is waiting for Operator review.{suffix}"
     if status_text == "approved_pending_write":
-        return f"Tune Update #{update_id} is approved and waiting for Tuning Agent write-back."
+        return f"Tune Update #{update_id} is approved and waiting for Tuning Agent write-back.{suffix}"
     if status_text == "write_failed":
-        return f"Tune Update #{update_id} write-back failed and needs Tuning Agent follow-up."
+        return f"Tune Update #{update_id} write-back failed and needs Tuning Agent follow-up.{suffix}"
     if status_text == "applied":
-        return f"Tune Update #{update_id} was applied."
+        return f"Tune Update #{update_id} was applied.{suffix}"
     if status_text == "rejected":
-        return f"Tune Update #{update_id} was rejected by the Operator."
-    return f"Tune Update #{update_id} is {_humanize_token(status_text) or 'recorded'}."
+        return f"Tune Update #{update_id} was rejected by the Operator.{suffix}"
+    return f"Tune Update #{update_id} is {_humanize_token(status_text) or 'recorded'}.{suffix}"
+
+
+def _settings_summary(settings_json: object) -> str:
+    if not settings_json:
+        return ""
+    try:
+        settings = json.loads(str(settings_json))
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(settings, dict):
+        return ""
+    parts = []
+    for key in sorted(settings):
+        value = settings[key]
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            parts.append(f"{key} = {value}")
+    return ", ".join(parts)
 
 
 def _task_events(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -253,6 +253,8 @@ class PiSupervisorWebTests(unittest.TestCase):
         self.assertIn("loop status", sent)
         self.assertIn("usable imported Blackbox Logs", sent)
         self.assertIn("There is no `update list` command", sent)
+        self.assertIn("--command <approved cli_text>", sent)
+        self.assertIn("Do not create a temporary CLI file", sent)
         self.assertIn("Do not choose no-change solely because the evidence is fixture-sourced", sent)
         session = self.conn.execute("SELECT status, process_id, debug_trace FROM tuning_agent_sessions WHERE loop_id = ?", (loop_id,)).fetchone()
         self.assertEqual(session["status"], "Starting Tuning Agent")

@@ -292,12 +292,17 @@ unless one of the commands fails or the needed syntax is not shown here.
 
 ```bash
 python3 -m tuna_fcs.cli cli write \
-  --cli-file approved-tune-update.cli \
+  --command $'set d_pitch = 48\nset d_roll = 42' \
   --confirm write-fc-cli \
   --json
 
 # Add `--connection usb` when using direct USB.
 ```
+
+Use the approved `cli_text` from `update pending-writes --json` as the
+`--command` value. Do not create temporary CLI files for routine approved
+write-back unless the inline command fails because of shell quoting or command
+length.
 
 The confirmation string is intentionally explicit. Use this only for Operator-approved **Tune Updates** after verifying FC identity and current state.
 
