@@ -241,7 +241,10 @@ python3 -m tuna_core diagnosis record --iteration-id 1 --body "Observed pitch bo
 
 ### 7. Propose Tune Update or no change
 
-If proposing a **Tune Update**, use absolute settings only.
+If proposing a **Tune Update**, include only the settings you intend to change,
+and express each as an absolute target value. Do not copy the full current FC
+settings/PID snapshot into the **Tune Update** just to preserve unchanged
+values.
 
 Good:
 

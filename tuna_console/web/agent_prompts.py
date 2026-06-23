@@ -49,6 +49,7 @@ Use FCS, not raw Bridge protocol access, for flight-controller operations.
 Use CLI help only if a documented command fails or syntax is not provided here; do not read source code or repository docs during normal Loop operation.
 There is no `update list` command; use `python3 -m tuna_core update pending-writes --json` for approved writes and `loop status` or `loop context` for current Loop state.
 If Tuna state explicitly marks FCS data or Blackbox Analysis as fixture-sourced for no-hardware exploratory testing, and the analysis is usable with no more capture data needed, treat that fixture evidence as sufficient to exercise the Tune Update review/write-back workflow. Do not choose no-change solely because the evidence is fixture-sourced.
+When proposing a Tune Update, include only the settings you intend to change, expressed as absolute target values; do not copy unchanged FC settings from the current snapshot into the proposal.
 """
 
 
@@ -91,6 +92,7 @@ Use FCS, not raw Bridge protocol access, for flight-controller operations.
 Use CLI help only if a documented command fails or syntax is not provided here; do not read source code or repository docs during normal Loop operation.
 There is no `update list` command; use `python3 -m tuna_core update pending-writes --json` for approved writes and `loop status` or `loop context` for current Loop state.
 If Tuna state explicitly marks FCS data or Blackbox Analysis as fixture-sourced for no-hardware exploratory testing, and the analysis is usable with no more capture data needed, treat that fixture evidence as sufficient to exercise the Tune Update review/write-back workflow. Do not choose no-change solely because the evidence is fixture-sourced.
+When proposing a Tune Update, include only the settings you intend to change, expressed as absolute target values; do not copy unchanged FC settings from the current snapshot into the proposal.
 """
 
 
