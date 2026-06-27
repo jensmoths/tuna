@@ -81,14 +81,27 @@ Recommended integration path:
 
 ## Near-term implementation slice
 
-A small first slice should not attempt automatic tuning. It should add:
+A small first slice should not attempt automatic tuning. Current code status:
 
-- header/settings extraction from decoded Blackbox CSV;
-- chirp capability/quality detection in analysis JSON;
-- chirp segment summaries by axis using `debug[1]`, with fallback to `debug[0]` phase;
-- validation warnings for missing `debug[*]`, not `debug_mode=CHIRP`, insufficient duration, low coherence, or motor saturation.
+- Implemented: header/settings extraction from decoded Blackbox CSV into
+  `blackbox_settings` and `config_snapshot` when header rows are present.
+- Implemented: `chirp_analysis` in analysis JSON with CHIRP debug-mode gating.
+- Implemented: chirp segment summaries by axis using `debug[1]`.
+- Implemented: validation warnings/reasons for missing `debug[*]`, missing
+  setpoint/gyro fields, non-CHIRP debug modes, no active chirp segments, and
+  missing sample rate.
+- Implemented first pass: per-segment frequency-response metrics using Welch
+  setpoint-to-gyro transfer function estimates, with coherence-derived
+  confidence.
+- Still TODO: validate on a real CHIRP **Blackbox Log**, verify high-resolution
+  scaling/header parsing against real `blackbox_decode` output, and add a real
+  or trimmed fixture with regression tests.
+- Still TODO: add a guarded diagnostic setup/capture workflow through FCS and
+  **Operator Tasks**. The workflow must not trigger CHIRP automatically.
 
-Only after that should Tuna add FRF/coherence estimation and model-based tune proposal support.
+Only after real-log validation should Tuna consider model-based tune proposal
+support. Any proposals must remain evidence-driven **Tune Updates** with absolute
+target settings and **Operator** review.
 
 ## Betaflight Configurator findings
 

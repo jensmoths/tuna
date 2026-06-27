@@ -21,85 +21,12 @@ References checked:
 - Basic rough noise proxy using mean/max absolute sample-to-sample delta for gyro, unfiltered gyro, and D-term fields.
 - Simple web Operator Console analysis list/detail pages.
 
-## TODO: log loading and quality
+## Current status
 
-- Detect gaps/dropouts and estimate effective logging rate.
-- Detect arming/disarming segments and trim idle ground time.
-- Detect Blackbox frame types and skipped/corrupt frames from decoder output where available.
-- Detect missing or unusable gyro, setpoint, motor, PID-term, throttle, debug, RPM, and filter-related fields.
-- Summarize firmware, craft name, PID profile, rate profile, filters, debug mode, and logging rates together with analysis.
-- Compare multiple logs from the same **Loop** and identify before/after pairs.
-
-## TODO: maneuver and segment detection
-
-- Detect snap rolls, snap flips, yaw spins, throttle punches, throttle cuts, propwash recovery segments, and steady hover/cruise segments.
-- Score segment usefulness for tuning by axis, stick input size, duration, and motor saturation.
-- Exclude segments with crashes, failsafe, RX loss, takeoff/landing bumps, or obvious clipping.
-- Allow the **Tuning Agent** to cite selected segment IDs in a **Diagnosis**.
-
-## TODO: step response / time-domain response
-
-PIDtoolbox has step response analysis for roll/pitch/yaw and uses setpoint/gyro data to evaluate controller response. Tuna should add machine-readable equivalents:
-
-- Find step-like setpoint inputs by axis.
-- Estimate latency/delay between setpoint and gyro response.
-- Estimate rise time, overshoot, undershoot, settling behavior, and bounce-back.
-- Compute per-axis response summaries across many events.
-- Compare response between logs and after **Tune Updates**.
-- Flag under-damped, over-damped, sluggish, or overshooting axes.
-- Support smoothing levels for response analysis.
-
-## TODO: spectral / frequency-domain analysis
-
-PIDtoolbox is known for spectral analysis and frequency-vs-throttle views. Tuna should add:
-
-- FFT/PSD summaries for gyro, unfiltered gyro, D-term, motor, and debug fields.
-- Frequency peaks by axis and signal.
-- Noise energy bands, especially low/mid/high frequency bands relevant to filters.
-- Frequency-vs-throttle heatmap data for gyro, D-term, motor, and RPM-related fields.
-- Before/after filter comparison summaries.
-- Identification of frame resonance, motor noise, RPM harmonics, and D-term amplification.
-- Machine-readable warnings when filter settings appear too light/heavy for observed noise.
-
-## TODO: filter analysis
-
-- Compare filtered gyro vs unfiltered gyro where both are logged.
-- Estimate attenuation by frequency band.
-- Detect excessive filtering from lag/response degradation.
-- Detect insufficient filtering from D-term/noise metrics.
-- Summarize dynamic notch/RPM filter effectiveness when relevant fields are available.
-- Detect when required Blackbox fields/debug modes are missing and create a clear recommendation for the **Tuning Agent** to request a Blackbox logging configuration change.
-- Track which **Blackbox Logs** were captured before/after diagnostic Blackbox setting changes.
-
-## TODO: motor and saturation analysis
-
-- Motor output range and saturation by motor.
-- Time spent near min/max motor output.
-- Desync-like or oscillatory motor patterns where detectable.
-- Throttle-dependent motor noise summaries.
-- Motor imbalance indicators and persistent motor offsets.
-
-## TODO: PID term analysis
-
-- P/I/D/feedforward ranges and rough noise by axis.
-- D-term noise and D-term spikes around throttle changes.
-- I-term windup or slow recovery indicators.
-- Feedforward tracking and setpoint transition behavior.
-- P/D balance indicators using response and D-term noise together.
-
-## TODO: visualization artifacts
-
-- Generate small static SVG/PNG plots for Operator Console review.
-- Include setpoint vs gyro overlays for selected segments.
-- Include rough spectrum plots and throttle-frequency heatmaps.
-- Keep JSON metrics as source of truth; plots are review artifacts.
-
-## TODO: tuning recommendation support
-
-- Convert analysis metrics into evidence snippets for **Diagnosis**.
-- Provide suggested areas to consider, not automatic changes: P, I, D, feedforward, filters, dynamic idle, rates.
-- Compare current analysis to previous **Tuning Iterations** in the same **Loop**.
-- Track whether a **Tune Update** improved or worsened response/noise.
+The active analysis roadmap and remaining TODOs now live in
+[`roadmap.md`](roadmap.md). This file keeps the PIDtoolbox-inspired
+background and implementation-history notes so detailed analysis context is not
+spread across multiple planning files.
 
 ## Implemented second pass
 
@@ -182,7 +109,10 @@ PIDtoolbox is known for spectral analysis and frequency-vs-throttle views. Tuna 
 - Implemented: first-pass motor output, saturation, throttle-bin, and imbalance summaries.
 - Implemented: first-pass PID term, D-term spike, I-term windup, feedforward, and P/D balance summaries.
 - Implemented: first-pass evidence-only filter/PID classifications, propwash recovery windows, segment-gated summaries, and capture-plan recommendations.
+- Implemented: CHIRP decoded-CSV analysis with debug-mode gating, chirp segment extraction, and first-pass frequency-response metrics.
+- Implemented: decoded-CSV Blackbox setting extraction into `blackbox_settings` and `config_snapshot` when header rows are present.
 - Not implemented yet: full debug-mode-specific dynamic notch/RPM filter effectiveness summaries.
+- Not implemented yet: static visualization artifacts such as SVG/PNG plots for Operator review.
 
 ## Implemented twelfth pass
 
@@ -213,15 +143,19 @@ PIDtoolbox is known for spectral analysis and frequency-vs-throttle views. Tuna 
 
 - Implemented first pass: analysis warnings name missing Blackbox fields or debug modes needed for a stronger **Diagnosis**.
 - Implemented: separate **Operator Notification** storage and UI for diagnostic Blackbox setting changes made by the **Tuning Agent** through FCS.
+- Implemented first pass: decoded CSV analysis extracts Blackbox header settings when present and exposes them as `blackbox_settings` and `config_snapshot`.
 - Add FCS helpers for reading and writing relevant Betaflight Blackbox settings.
-- Record Blackbox setting snapshots with imported **Blackbox Logs** so the **Tuning Agent** knows which analysis features are valid for each log.
+- Record normalized Blackbox setting snapshots with imported **Blackbox Logs** so the **Tuning Agent** knows which analysis features are valid for each log. Current Import stores generic `.bbl` headers/PIDs in metadata, but does not yet persist a normalized settings snapshot separate from metadata/analysis JSON.
 - Keep diagnostic Blackbox setting changes separate from **Tune Updates** unless the setting also affects flight behavior.
 
 ## TODO: chirp validation and workflow
 
+- Implemented: `chirp_analysis` exists for decoded CSV inputs with `debug[0..3]`, `setpoint[0..2]`, and `gyroADC[0..2]`; it requires `debug_mode = CHIRP`/`97` or `chirp_*` settings before treating debug fields as CHIRP evidence.
+- Implemented: synthetic regression tests cover available CHIRP analysis, missing fields, and non-CHIRP debug-mode rejection.
 - Validate `chirp_analysis` on a real chirp **Blackbox Log** captured with CHIRP-enabled Betaflight, `debug_mode = CHIRP`, high-resolution Blackbox logging, and full roll/pitch/yaw chirp segments.
 - Verify decoded CSV header parsing against real `blackbox_decode` output for chirp logs, especially `debug_mode`, `blackbox_high_resolution`, chirp parameter rows, and field names.
 - Verify high-resolution scaling assumptions for setpoint/gyro in decoded CSV chirp logs.
 - Compare Tuna chirp metrics against Betaflight Configurator's Autotune tab and `bf_controller_tuning` on the same log.
 - Implemented: general `request_flight_capture` **Operator Task** kind/template for requesting another flight and **Blackbox Log** capture; chirp-specific setup belongs in prior FCS writes plus **Operator Notifications**.
+- Add a guarded diagnostic setup workflow only after real-log validation: verify firmware CHIRP support, set high-resolution Blackbox logging and `debug_mode = CHIRP` through FCS, record an **Operator Notification**, and create a CHIRP-specific `request_flight_capture` **Operator Task**. Do not trigger CHIRP automatically.
 - Add a fixture real chirp log or trimmed decoded CSV fixture once available, with regression tests for segment detection and frequency-response metrics.

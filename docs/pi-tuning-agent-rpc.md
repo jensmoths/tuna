@@ -209,14 +209,24 @@ Read/write operation is allowed in v1, but these gates are mandatory:
 
 ## v1 implementation outline
 
-1. Add Operator Console supervisor code that can launch `pi --mode rpc` in the
+Status checked against the current code: the v1 outline is mostly implemented.
+
+1. Implemented: Operator Console supervisor code launches `pi --mode rpc` in the
    Tuna working directory.
-2. Store the Pi session id/path for each **Loop**.
-3. Add a **Loop** action that sends the initial prompt for that **Loop**.
-4. Track status from Pi RPC events and expose it on the **Loop** detail page.
-5. Add an abort action for a running **Tuning Agent** process.
-6. Add resume behavior that reconnects a **Loop** to its stored Pi session.
+2. Implemented: Pi session id/path, process/status fields, connection settings,
+   debug trace, and resume cursor are stored per **Loop**.
+3. Implemented: **Loop** start/continue actions send initial or follow-up prompts
+   for that **Loop**.
+4. Implemented: Pi RPC events update coarse **Tuning Agent** status and are
+   exposed on Loop detail/Workbench pages.
+5. Implemented: abort action sends an RPC abort command, terminates the process,
+   and records `Aborted` status.
+6. Implemented first pass: continue/resume behavior can reuse an idle running
+   process or restart from a stored Pi session after interruption/abort.
+
+Remaining polish is product/UX oriented: summarize the raw supervisor/debug trace
+into an expert transcript review panel, and continue hardening restart/resume
+behavior against real Pi/terminal failures.
 
 Keep this implementation focused. Do not add automatic workflow decisions to the
 supervisor.
-
